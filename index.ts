@@ -7,11 +7,94 @@
 import { Client } from "@xhayper/discord-rpc";
 import { spotify, type SpotifyState } from "./src/spotify.ts";
 import { createPresenceService } from "./src/presence.ts";
+import {
+  getConfigPath,
+  getConfig,
+  updateConfig,
+  type AppConfig,
+} from "./src/local-files.ts";
 
-const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
+let config = getConfig();
+let clientId = config.discordClientId || process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
 
-const rpc = new Client({ clientId: CLIENT_ID });
-const presence = createPresenceService();
+const rpc = new Client({ clientId });
+let presence = createPresenceService(config);
+
+function refreshPresence(nextConfig: AppConfig) {
+  presence = createPresenceService(nextConfig);
+  if (nextConfig.discordClientId && nextConfig.discordClientId !== clientId) {
+    clientId = nextConfig.discordClientId;
+    console.warn("Discord client ID changed. Restart the app to reconnect.");
+  }
+}
+
+const logToStderr = (args: unknown[]) => {
+  process.stderr.write(`${args.map(String).join(" ")}\n`);
+};
+
+console.log = (...args: unknown[]) => logToStderr(args);
+console.warn = (...args: unknown[]) => logToStderr(args);
+console.error = (...args: unknown[]) => logToStderr(args);
+
+interface TrackStatus {
+  playing: boolean;
+  reason?: string;
+  title?: string;
+  artist?: string;
+  album?: string;
+  coverUrl?: string | null;
+  source?: string;
+  positionMs?: number;
+  durationMs?: number;
+}
+
+interface ProtocolMessage {
+  type: "status" | "config";
+  payload: TrackStatus | AppConfig;
+}
+
+interface CommandMessage {
+  type: "command";
+  command: "get-config" | "update-config" | "add-folder" | "open-config";
+  payload?: Partial<AppConfig>;
+}
+
+function emitStatus(status: TrackStatus) {
+  const message: ProtocolMessage = { type: "status", payload: status };
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+function emitConfig(configPayload: AppConfig) {
+  const message: ProtocolMessage = { type: "config", payload: configPayload };
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+async function handleCommand(message: CommandMessage) {
+  switch (message.command) {
+    case "get-config":
+      console.log("[sidecar] get-config");
+      emitConfig(config);
+      break;
+    case "update-config": {
+      const next = updateConfig(message.payload ?? {});
+      config = next;
+      refreshPresence(next);
+      emitConfig(next);
+      break;
+    }
+    case "add-folder": {
+      await presence.addMusicFolder();
+      config = getConfig();
+      emitConfig(config);
+      break;
+    }
+    case "open-config":
+      Bun.spawnSync(["open", getConfigPath()]);
+      break;
+    default:
+      break;
+  }
+}
 
 // Handle --add-folder flag
 if (process.argv.includes("--add-folder")) {
@@ -23,6 +106,32 @@ if (process.argv.includes("--add-folder")) {
   }
   process.exit(0);
 }
+
+// Listen for commands from stdin
+process.stdin.setEncoding("utf-8");
+let stdinBuffer = "";
+process.stdin.on("data", (chunk) => {
+  stdinBuffer += chunk;
+  let newlineIndex = stdinBuffer.indexOf("\n");
+  while (newlineIndex !== -1) {
+    const line = stdinBuffer.slice(0, newlineIndex).trim();
+    stdinBuffer = stdinBuffer.slice(newlineIndex + 1);
+    newlineIndex = stdinBuffer.indexOf("\n");
+
+    if (!line) continue;
+    try {
+      const message = JSON.parse(line) as CommandMessage;
+      if (message.type === "command") {
+        void handleCommand(message);
+      }
+    } catch (error) {
+      console.error("Failed to parse command:", error);
+    }
+  }
+});
+
+emitConfig(config);
+console.log("[sidecar] booted");
 
 // Show configured folders
 const folders = presence.getMusicFolders();
@@ -42,6 +151,7 @@ async function updatePresence(state: SpotifyState) {
   if (!state.isRunning) {
     await rpc.user?.clearActivity();
     console.log("Cleared presence - Spotify not running");
+    emitStatus({ playing: false, reason: "spotify-not-running" });
     return;
   }
 
@@ -54,15 +164,38 @@ async function updatePresence(state: SpotifyState) {
   if (activity) {
     await rpc.user?.setActivity(activity);
     console.log(`Playing: ${state.track.title} - ${state.track.artist}`);
+    emitStatus({
+      playing: true,
+      title: state.track.title,
+      artist: state.track.artist,
+      album: state.track.album,
+      coverUrl,
+      source: state.track.source,
+      positionMs: state.positionMs,
+      durationMs: state.track.durationMs,
+    });
   } else {
     await rpc.user?.clearActivity();
     console.log("Cleared presence - not playing");
+    emitStatus({
+      playing: false,
+      reason: state.track.source !== "local" ? "not-local" : "not-playing",
+      title: state.track.title,
+      artist: state.track.artist,
+      album: state.track.album,
+      coverUrl,
+      source: state.track.source,
+      positionMs: state.positionMs,
+      durationMs: state.track.durationMs,
+    });
   }
 }
 
 // Connect to Discord
 rpc.on("ready", () => {
   console.log(`Connected to Discord as ${rpc.user?.username}`);
+  emitStatus({ playing: false, reason: "idle" });
+  emitConfig(getConfig());
 
   // Poll Spotify and update presence
   spotify.onStateChange(async (state: SpotifyState) => {
@@ -77,8 +210,8 @@ rpc.on("ready", () => {
 rpc.login().catch((err) => {
   if (err.code === 1 || err.message?.includes("timed out")) {
     console.error("Failed to connect to Discord. Make sure Discord is running.");
+    emitStatus({ playing: false, reason: "discord-not-running" });
   } else {
     console.error("Discord RPC error:", err);
   }
-  process.exit(1);
 });

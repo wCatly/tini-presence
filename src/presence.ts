@@ -10,7 +10,7 @@
 
 import { ActivityType } from "discord-api-types/v10";
 import { extractCoverArt, getExtension, getFolderName } from "./cover.ts";
-import { localFiles } from "./local-files.ts";
+import { getConfig, localFiles, type AppConfig } from "./local-files.ts";
 import { UploadService, type UploadConfig } from "./upload.ts";
 import type { SpotifyState, Track } from "./spotify.ts";
 
@@ -25,6 +25,8 @@ export interface CoverResult {
 
 export class PresenceService {
   private uploadService: UploadService | null = null;
+  // Cache cover URLs by track ID to avoid repeated HEAD requests
+  private coverUrlCache: Map<string, string | null> = new Map();
 
   constructor(config: PresenceConfig) {
     if (config.upload) {
@@ -40,6 +42,8 @@ export class PresenceService {
    * - File not found
    * - No cover art in file
    * - Upload failed
+   * 
+   * Results are cached by track ID to avoid repeated requests.
    */
   async getCoverUrl(track: Track): Promise<string | null> {
     // Only handle local files
@@ -51,10 +55,16 @@ export class PresenceService {
       return null;
     }
 
+    // Check cache first
+    if (this.coverUrlCache.has(track.id)) {
+      return this.coverUrlCache.get(track.id) ?? null;
+    }
+
     // Find the local file
     const filePath = localFiles.findFile(track.id);
     if (!filePath) {
       console.log(`[presence] File not found: ${track.title}`);
+      this.coverUrlCache.set(track.id, null);
       return null;
     }
 
@@ -62,6 +72,7 @@ export class PresenceService {
     const cover = await extractCoverArt(filePath);
     if (!cover) {
       console.log(`[presence] No cover art: ${track.title}`);
+      this.coverUrlCache.set(track.id, null);
       return null;
     }
 
@@ -83,9 +94,12 @@ export class PresenceService {
       } else {
         console.log(`[presence] Cover uploaded: ${result.url}`);
       }
+      
+      this.coverUrlCache.set(track.id, result.url);
       return result.url;
     } catch (err) {
       console.error(`[presence] Upload failed:`, err);
+      this.coverUrlCache.set(track.id, null);
       return null;
     }
   }
@@ -149,15 +163,17 @@ export class PresenceService {
 /**
  * Create presence service from environment variables
  */
-export function createPresenceService(): PresenceService {
-  const apiKey = process.env.COPYPARTY_API_KEY;
-  
+export function createPresenceService(configOverride?: AppConfig): PresenceService {
+  const fileConfig = configOverride ?? getConfig();
+  const apiKey = fileConfig.copypartyApiKey || process.env.COPYPARTY_API_KEY;
+
   const config: PresenceConfig = {};
-  
+
   if (apiKey) {
     config.upload = {
-      baseUrl: process.env.COPYPARTY_URL || "https://pifiles.florian.lt",
-      uploadPath: process.env.COPYPARTY_PATH || "/cdn",
+      baseUrl:
+        fileConfig.copypartyUrl || process.env.COPYPARTY_URL || "https://pifiles.florian.lt",
+      uploadPath: fileConfig.copypartyPath || process.env.COPYPARTY_PATH || "/cdn",
       apiKey,
     };
   }

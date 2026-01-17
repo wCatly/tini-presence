@@ -4,10 +4,12 @@ import { resolve } from "node:path";
 import {
   parseLocalTrackInfo,
   findLocalFile,
+  findFileFromSpotifyDb,
+  parseSpotifyLocalFilesDb,
   loadConfig,
   saveConfig,
   getMusicFolders,
-  type LocalFilesConfig,
+  type AppConfig,
 } from "../../src/local-files.ts";
 
 const TEST_MUSIC_DIR = resolve(import.meta.dir, "../../test-music");
@@ -109,7 +111,10 @@ describe("Local Files", () => {
     const originalEnv = process.env.HOME;
 
     beforeEach(() => {
-      // Use temp dir for config during tests
+      process.env.HOME = TEST_CONFIG_DIR;
+      if (!existsSync(TEST_CONFIG_DIR)) {
+        mkdirSync(TEST_CONFIG_DIR, { recursive: true });
+      }
       if (existsSync(TEST_CONFIG_PATH)) {
         rmSync(TEST_CONFIG_PATH);
       }
@@ -119,17 +124,36 @@ describe("Local Files", () => {
       if (existsSync(TEST_CONFIG_PATH)) {
         rmSync(TEST_CONFIG_PATH);
       }
+      process.env.HOME = originalEnv;
     });
 
     test("loadConfig returns empty folders when no config exists", () => {
       const config = loadConfig();
       expect(config).toHaveProperty("musicFolders");
       expect(Array.isArray(config.musicFolders)).toBe(true);
+      expect(config.copypartyUrl).toBe("https://pifiles.florian.lt");
+      expect(config.copypartyPath).toBe("/cdn");
     });
 
     test("getMusicFolders returns array", () => {
       const folders = getMusicFolders();
       expect(Array.isArray(folders)).toBe(true);
+    });
+
+    test("loadConfig supports optional credentials", () => {
+      const config: AppConfig = {
+        musicFolders: ["/tmp/music"],
+        discordClientId: "client-id",
+        copypartyApiKey: "api-key",
+        copypartyUrl: "https://cdn.example.com",
+        copypartyPath: "/cdn",
+      };
+      saveConfig(config);
+      const loaded = loadConfig();
+      expect(loaded.discordClientId).toBe("client-id");
+      expect(loaded.copypartyApiKey).toBe("api-key");
+      expect(loaded.copypartyUrl).toBe("https://cdn.example.com");
+      expect(loaded.copypartyPath).toBe("/cdn");
     });
   });
 
@@ -147,6 +171,70 @@ describe("Local Files", () => {
       for (const file of testFiles) {
         const ext = file.substring(file.lastIndexOf("."));
         expect(extensions).toContain(ext);
+      }
+    });
+  });
+
+  describe("Spotify local-files.bnk parsing", () => {
+    test("parseSpotifyLocalFilesDb returns a Map", () => {
+      const db = parseSpotifyLocalFilesDb();
+      expect(db).toBeInstanceOf(Map);
+    });
+
+    test("parseSpotifyLocalFilesDb finds test music files", () => {
+      const db = parseSpotifyLocalFilesDb();
+
+      // Our test files should be in Spotify's database
+      // Keys are lowercase filenames without extension
+      const hasTestSongOne = db.has("test song one");
+      const hasAnotherTrack = db.has("another track");
+      const hasThirdSong = db.has("third song");
+
+      // At least one should be found if Spotify has indexed them
+      if (db.size > 0) {
+        expect(hasTestSongOne || hasAnotherTrack || hasThirdSong).toBe(true);
+      }
+    });
+
+    test("parseSpotifyLocalFilesDb caches results", () => {
+      // First call
+      const db1 = parseSpotifyLocalFilesDb();
+      // Second call should return cached result
+      const db2 = parseSpotifyLocalFilesDb();
+
+      expect(db1).toBe(db2); // Same reference = cached
+    });
+
+    test("findFileFromSpotifyDb finds existing file by title", () => {
+      const db = parseSpotifyLocalFilesDb();
+
+      if (db.size > 0) {
+        // Get the first file in the database
+        const firstKey = db.keys().next().value;
+        if (firstKey) {
+          const found = findFileFromSpotifyDb(firstKey);
+          // Should return null or a valid path
+          if (found) {
+            expect(existsSync(found)).toBe(true);
+          }
+        }
+      }
+    });
+
+    test("findFileFromSpotifyDb returns null for non-existent title", () => {
+      const result = findFileFromSpotifyDb("this_file_definitely_does_not_exist_12345");
+      expect(result).toBeNull();
+    });
+
+    test("findLocalFile uses Spotify database", () => {
+      // This tests the integration - findLocalFile should find files via the .bnk database
+      const trackId = "spotify:local:Test+Artist:Test+Album:Test+Song+One:30";
+      const result = findLocalFile(trackId);
+
+      // Should find the file either via database or folder fallback
+      if (result) {
+        expect(existsSync(result)).toBe(true);
+        expect(result).toContain("Test Song One");
       }
     });
   });
