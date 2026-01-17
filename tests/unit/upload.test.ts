@@ -1,4 +1,4 @@
-import { describe, expect, test, beforeEach } from "bun:test";
+import { describe, expect, test, beforeEach, beforeAll, afterAll } from "bun:test";
 import {
   uploadFile,
   uploadWithCache,
@@ -6,9 +6,9 @@ import {
   getCacheSize,
   UploadService,
   UploadError,
-  getDeviceId,
   buildCoverPath,
 } from "../../src/upload.ts";
+import { setTestIdentity, resetIdentity, TEST_IDENTITY, getDeviceFolder } from "../../src/identity.ts";
 import type { UploadConfig, RetryConfig } from "../../src/upload.ts";
 
 const testConfig: UploadConfig = {
@@ -33,6 +33,15 @@ function mockFetch(impl: () => Promise<Response>): () => void {
 }
 
 describe("Upload Service", () => {
+  // Use test identity for all upload tests
+  beforeAll(() => {
+    setTestIdentity(TEST_IDENTITY);
+  });
+
+  afterAll(() => {
+    resetIdentity();
+  });
+
   beforeEach(() => {
     clearCache();
   });
@@ -290,8 +299,9 @@ describe("Upload Service", () => {
           }
         );
 
-        // Should contain device ID, folder, song title, and hash
+        // Should contain device folder, folder, song title, and hash
         expect(result.filename).toContain("tini-presence");
+        expect(result.filename).toContain("test-machine-test1234"); // Test identity
         expect(result.filename).toContain("Music");
         expect(result.filename).toContain("My_Song");
         expect(result.filename).toContain("abc123");
@@ -301,17 +311,8 @@ describe("Upload Service", () => {
     });
   });
 
-  describe("Device ID", () => {
-    test("getDeviceId returns consistent ID", () => {
-      const id1 = getDeviceId();
-      const id2 = getDeviceId();
-      expect(id1).toBe(id2);
-      expect(id1.length).toBe(8);
-    });
-  });
-
   describe("buildCoverPath", () => {
-    test("builds correct path structure", () => {
+    test("builds correct path structure with test identity", () => {
       const path = buildCoverPath({
         songTitle: "Test Song",
         folderName: "My Music",
@@ -319,7 +320,8 @@ describe("Upload Service", () => {
         extension: "jpg",
       });
 
-      expect(path).toMatch(/^tini-presence\/[a-f0-9]{8}\/My_Music\/Test_Song-abcd1234\.jpg$/);
+      // Uses test identity: test-machine-test1234
+      expect(path).toBe("tini-presence/test-machine-test1234/My_Music/Test_Song-abcd1234.jpg");
     });
 
     test("sanitizes special characters", () => {

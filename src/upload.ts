@@ -1,8 +1,4 @@
-import { createHash } from "node:crypto";
-import { hostname } from "node:os";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
+import { getDeviceFolder } from "./identity.ts";
 
 export interface UploadConfig {
   baseUrl: string;
@@ -55,40 +51,15 @@ function sanitizeForPath(name: string): string {
     .slice(0, 100);                  // Limit length
 }
 
-// Get or create a persistent device ID
-const CONFIG_DIR = path.join(homedir(), ".config", "tini-presence");
-const DEVICE_ID_PATH = path.join(CONFIG_DIR, "device-id");
-
-function ensureConfigDir(): void {
-  if (!existsSync(CONFIG_DIR)) {
-    Bun.spawnSync(["mkdir", "-p", CONFIG_DIR]);
-  }
-}
-
-export function getDeviceId(): string {
-  ensureConfigDir();
-  
-  if (existsSync(DEVICE_ID_PATH)) {
-    return readFileSync(DEVICE_ID_PATH, "utf-8").trim();
-  }
-  
-  // Generate a short unique ID based on hostname + random
-  const base = `${hostname()}-${Date.now()}-${Math.random()}`;
-  const deviceId = createHash("sha256").update(base).digest("hex").slice(0, 8);
-  
-  writeFileSync(DEVICE_ID_PATH, deviceId);
-  return deviceId;
-}
-
 // Build the full upload path for cover art
-// Result: tini-presence/{device-id}/{folder}/{song-title}-{hash}.{ext}
+// Result: tini-presence/{machine-name}-{id}/{folder}/{song-title}-{hash}.{ext}
 export function buildCoverPath(options: CoverUploadOptions): string {
-  const deviceId = getDeviceId();
+  const deviceFolder = getDeviceFolder();
   const folder = sanitizeForPath(options.folderName);
   const title = sanitizeForPath(options.songTitle);
   const filename = `${title}-${options.hash}.${options.extension}`;
   
-  return `tini-presence/${deviceId}/${folder}/${filename}`;
+  return `tini-presence/${deviceFolder}/${folder}/${filename}`;
 }
 
 // In-memory cache
@@ -143,7 +114,7 @@ export async function createFolder(
 
 export async function uploadFile(
   data: Uint8Array,
-  filePath: string,  // Full path including subfolders, e.g., "tini-presence/abc123/Music/Song-hash.jpg"
+  filePath: string,  // Full path including subfolders
   mimeType: string,
   config: UploadConfig,
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
@@ -242,10 +213,6 @@ export class UploadService {
   constructor(config: UploadConfig, retryConfig?: Partial<RetryConfig>) {
     this.config = config;
     this.retryConfig = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
-  }
-
-  get deviceId(): string {
-    return getDeviceId();
   }
 
   async upload(

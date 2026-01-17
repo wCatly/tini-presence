@@ -1,122 +1,70 @@
-import { Client } from "@xhayper/discord-rpc";
+/**
+ * tini-presence
+ * 
+ * Discord Rich Presence for Spotify with local file support
+ */
 
-import { extractCoverArt, getExtension, getFolderName } from "./src/cover.ts";
-import { localFiles } from "./src/local-files.ts";
+import { Client } from "@xhayper/discord-rpc";
 import { spotify, type SpotifyState } from "./src/spotify.ts";
-import { UploadService } from "./src/upload.ts";
+import { createPresenceService } from "./src/presence.ts";
 
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
-const COPYPARTY_URL = process.env.COPYPARTY_URL || "https://pifiles.florian.lt";
-const COPYPARTY_API_KEY = process.env.COPYPARTY_API_KEY || "";
 
 const rpc = new Client({ clientId: CLIENT_ID });
+const presence = createPresenceService();
 
-const uploadService = COPYPARTY_API_KEY
-  ? new UploadService({
-      baseUrl: COPYPARTY_URL,
-      uploadPath: process.env.COPYPARTY_PATH || "/cdn",
-      apiKey: COPYPARTY_API_KEY,
-    })
-  : null;
-
-async function getCoverUrl(state: SpotifyState): Promise<string | null> {
-  if (!state.isRunning || !uploadService) return null;
-
-  const { track } = state;
-
-  if (track.source !== "local") return null;
-
-  const filePath = localFiles.findFile(track.id);
-  if (!filePath) {
-    console.log(`Could not find local file for: ${track.title}`);
-    return null;
+// Handle --add-folder flag
+if (process.argv.includes("--add-folder")) {
+  const folder = await presence.addMusicFolder();
+  if (folder) {
+    console.log(`Added folder: ${folder}`);
+  } else {
+    console.log("No folder selected.");
   }
-
-  console.log(`Found local file: ${filePath}`);
-
-  const cover = await extractCoverArt(filePath);
-  if (!cover) {
-    console.log(`No cover art found in: ${filePath}`);
-    return null;
-  }
-
-  try {
-    // Upload with organized path: tini-presence/{device}/{folder}/{title}-{hash}.jpg
-    const result = await uploadService.uploadCover(cover.data, cover.mimeType, {
-      songTitle: track.title,
-      folderName: getFolderName(filePath),
-      hash: cover.hash,
-      extension: getExtension(cover.mimeType),
-    });
-    return result.url;
-  } catch (err) {
-    console.error("Failed to upload cover:", err);
-    return null;
-  }
+  process.exit(0);
 }
 
-async function updatePresence(state: SpotifyState) {
-  if (!state.isRunning || state.state !== "playing") {
-    await rpc.user?.clearActivity();
-    console.log("Cleared presence - Spotify not playing");
-    return;
-  }
-
-  const { track, positionMs } = state;
-  const now = Date.now();
-  const startTimestamp = now - positionMs;
-  const endTimestamp = now + (track.durationMs - positionMs);
-
-  let largeImageKey = "spotify";
-
-  if (track.source === "local") {
-    const coverUrl = await getCoverUrl(state);
-    if (coverUrl) {
-      largeImageKey = coverUrl;
-      console.log(`Using cover art: ${coverUrl}`);
-    }
-  }
-
-  await rpc.user?.setActivity({
-    details: track.title,
-    state: `by ${track.artist}`,
-    startTimestamp,
-    endTimestamp,
-    largeImageKey,
-    largeImageText: track.album,
-    smallImageKey: track.source === "local" ? "local" : "spotify",
-    smallImageText: track.source === "local" ? "Local File" : "Spotify",
-    instance: false,
-  });
-
-  console.log(`Playing: ${track.title} - ${track.artist}`);
-}
-
-// Check if music folders are configured
-const folders = localFiles.getFolders();
+// Show configured folders
+const folders = presence.getMusicFolders();
 if (folders.length === 0) {
   console.log("No music folders configured.");
   console.log("Run with --add-folder to add a music folder.");
-
-  if (process.argv.includes("--add-folder")) {
-    const folder = await localFiles.promptAddFolder();
-    if (folder) {
-      console.log(`Added folder: ${folder}`);
-    } else {
-      console.log("No folder selected.");
-    }
-  }
 } else {
   console.log("Music folders:", folders);
 }
 
-if (process.argv.includes("--add-folder")) {
-  process.exit(0);
+if (!presence.hasUpload) {
+  console.log("Warning: COPYPARTY_API_KEY not set, cover art upload disabled.");
 }
 
-rpc.on("ready", () => {
-  console.log(`Discord RPC connected as ${rpc.user?.username}`);
+// Update Discord presence
+async function updatePresence(state: SpotifyState) {
+  if (!state.isRunning) {
+    await rpc.user?.clearActivity();
+    console.log("Cleared presence - Spotify not running");
+    return;
+  }
 
+  // Get cover URL for local files
+  const coverUrl = await presence.getCoverUrl(state.track);
+
+  // Build activity
+  const activity = presence.buildActivity(state, coverUrl);
+
+  if (activity) {
+    await rpc.user?.setActivity(activity);
+    console.log(`Playing: ${state.track.title} - ${state.track.artist}`);
+  } else {
+    await rpc.user?.clearActivity();
+    console.log("Cleared presence - not playing");
+  }
+}
+
+// Connect to Discord
+rpc.on("ready", () => {
+  console.log(`Connected to Discord as ${rpc.user?.username}`);
+
+  // Poll Spotify and update presence
   spotify.onStateChange(async (state: SpotifyState) => {
     try {
       await updatePresence(state);

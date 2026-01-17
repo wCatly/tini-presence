@@ -4,7 +4,8 @@ import { Client } from "@xhayper/discord-rpc";
 
 import { extractCoverArt, getExtension, getFolderName } from "../../src/cover.ts";
 import { spotify } from "../../src/spotify.ts";
-import { UploadService, getDeviceId } from "../../src/upload.ts";
+import { UploadService } from "../../src/upload.ts";
+import { setTestIdentity, resetIdentity, TEST_IDENTITY, getDeviceFolder } from "../../src/identity.ts";
 
 const TEST_MUSIC_DIR = resolve(import.meta.dir, "../../test-music");
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
@@ -96,6 +97,9 @@ describe("Integration Tests", () => {
   });
 
   describe("Upload Service", () => {
+    // Use real identity for integration tests (uploads to real server)
+    // but we verify against getDeviceFolder() which uses real identity
+    
     test(
       "uploads cover with organized path",
       async () => {
@@ -128,7 +132,7 @@ describe("Integration Tests", () => {
 
           expect(result.url).toMatch(/^https?:\/\//);
           expect(result.filename).toContain("tini-presence");
-          expect(result.filename).toContain(getDeviceId());
+          expect(result.filename).toContain(getDeviceFolder()); // Uses real identity
           expect(result.filename).toContain("Test_Song_One");
           console.log(`Uploaded to: ${result.url}`);
 
