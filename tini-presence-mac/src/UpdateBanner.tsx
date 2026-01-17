@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { Download, AlertCircle, Loader2 } from "lucide-react";
 
 interface UpdateState {
   status:
@@ -18,6 +18,14 @@ interface UpdateState {
   downloaded: number;
   total: number;
   error: string | null;
+}
+
+function formatBytes(bytes: number) {
+  if (bytes === 0) return "0 B";
+  const k = 1024;
+  const sizes = ["B", "KB", "MB", "GB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return `${Number.parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
 }
 
 export function UpdateBanner() {
@@ -113,69 +121,92 @@ export function UpdateBanner() {
 
   if (state.status === "idle") return null;
 
-  const formatBytes = (bytes: number) => {
-    if (bytes === 0) return "0 B";
-    const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${Number.parseFloat((bytes / k ** i).toFixed(1))} ${sizes[i]}`;
-  };
+  if (state.status === "checking") {
+    return (
+      <div className="px-5 py-3 bg-primary/5 border-b border-border">
+        <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <Loader2 className="w-4 h-4 animate-spin" />
+          <span>Checking for updates...</span>
+        </div>
+      </div>
+    );
+  }
 
-  return (
-    <Alert className="border-primary/30 bg-primary/10">
-      {state.status === "checking" && (
-        <AlertDescription className="flex items-center gap-2 text-muted-foreground">
-          <span className="animate-spin">🔄</span>
-          Checking for updates...
-        </AlertDescription>
-      )}
-
-      {state.status === "available" && state.update && (
-        <AlertDescription className="flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <span>🎉</span>
-            <div className="flex flex-col">
-              <span className="font-medium">Update available!</span>
-              <span className="text-xs text-primary">
+  if (state.status === "available" && state.update) {
+    return (
+      <div className="px-5 py-3 bg-primary/5 border-b border-border animate-slide-up">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center">
+              <Download className="w-4 h-4 text-primary" />
+            </div>
+            <div>
+              <p className="text-sm font-medium text-foreground">
+                Update available
+              </p>
+              <p className="text-xs text-primary">
                 v{state.update.currentVersion} → v{state.update.version}
-              </span>
+              </p>
             </div>
           </div>
-          <Button size="sm" onClick={installUpdate}>
-            Update now
+          <Button
+            size="sm"
+            onClick={installUpdate}
+            className="bg-primary hover:bg-primary/90 text-primary-foreground h-8 px-3 text-xs font-medium"
+          >
+            Update
           </Button>
-        </AlertDescription>
-      )}
+        </div>
+      </div>
+    );
+  }
 
-      {state.status === "downloading" && (
-        <AlertDescription className="flex flex-col gap-2">
-          <div className="flex items-center gap-2 text-sm">
-            <span>⬇️</span>
+  if (state.status === "downloading") {
+    return (
+      <div className="px-5 py-3 bg-primary/5 border-b border-border">
+        <div className="flex items-center gap-3 mb-2">
+          <Download className="w-4 h-4 text-primary" />
+          <span className="text-sm text-foreground">
             Downloading... {formatBytes(state.downloaded)} /{" "}
             {formatBytes(state.total)}
-          </div>
-          <Progress value={state.progress} className="h-1" />
-        </AlertDescription>
-      )}
+          </span>
+        </div>
+        <Progress value={state.progress} className="h-1.5" />
+      </div>
+    );
+  }
 
-      {state.status === "installing" && (
-        <AlertDescription className="flex items-center gap-2 text-muted-foreground">
-          <span className="animate-spin">⚙️</span>
-          Installing update...
-        </AlertDescription>
-      )}
+  if (state.status === "installing") {
+    return (
+      <div className="px-5 py-3 bg-primary/5 border-b border-border">
+        <div className="flex items-center gap-3 text-muted-foreground text-sm">
+          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+          <span>Installing update...</span>
+        </div>
+      </div>
+    );
+  }
 
-      {state.status === "error" && (
-        <AlertDescription className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-destructive">
-            <span>❌</span>
-            <span className="text-sm">{state.error}</span>
+  if (state.status === "error") {
+    return (
+      <div className="px-5 py-3 bg-destructive/5 border-b border-border">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3 text-destructive text-sm">
+            <AlertCircle className="w-4 h-4" />
+            <span>{state.error}</span>
           </div>
-          <Button size="sm" variant="outline" onClick={checkForUpdates}>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={checkForUpdates}
+            className="h-8 px-3 text-xs"
+          >
             Retry
           </Button>
-        </AlertDescription>
-      )}
-    </Alert>
-  );
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }

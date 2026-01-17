@@ -8,8 +8,8 @@
     "dev:ui": "vite",
     "build:ui": "vite build",
     "dev": "bun run build:sidecar && tauri dev",
-    "build": "tauri build",
-    "build:release": "tauri build && bun run scripts/generate-update-manifest.ts",
+    "build": "source .env && tauri build",
+    "build:release": "source .env && tauri build --target universal-apple-darwin && bun run scripts/generate-update-manifest.ts",
     "generate-manifest": "bun run scripts/generate-update-manifest.ts"
   },
   "dependencies": {

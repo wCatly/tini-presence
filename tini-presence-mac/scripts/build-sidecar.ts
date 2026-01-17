@@ -12,8 +12,9 @@ const TAURI_DIR = join(import.meta.dir, "../src-tauri");
 const BINARIES_DIR = join(TAURI_DIR, "binaries");
 
 // Get target triple for current platform
-function getTargetTriple(): string {
-  const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
+function getTargetTriple(archOverride?: string): string {
+  const arch =
+    archOverride || (process.arch === "arm64" ? "aarch64" : "x86_64");
   return `${arch}-apple-darwin`;
 }
 
@@ -25,26 +26,39 @@ async function build() {
     mkdirSync(BINARIES_DIR, { recursive: true });
   }
 
-  const targetTriple = getTargetTriple();
-  const outputName = `tini-presence-core-${targetTriple}`;
-  const outputPath = join(BINARIES_DIR, outputName);
+  const architectures = ["aarch64", "x86_64"];
+  const entryPoint = join(ROOT, "index.ts");
+
+  for (const arch of architectures) {
+    const targetTriple = getTargetTriple(arch);
+    const outputName = `tini-presence-core-${targetTriple}`;
+    const outputPath = join(BINARIES_DIR, outputName);
+
+    console.log(`  - Compiling for ${arch}...`);
+    // Build using Bun's compile feature
+    await $`bun build ${entryPoint} --compile --target bun-darwin-${arch} --outfile ${outputPath}`.cwd(
+      ROOT
+    );
+  }
+
+  // Create dev-friendly binary for current arch session
+  const currentTriple = getTargetTriple();
+  const currentBinary = join(
+    BINARIES_DIR,
+    `tini-presence-core-${currentTriple}`
+  );
   const devOutputPath = join(BINARIES_DIR, "tini-presence-core");
 
-  // Build using Bun's compile feature
-  await $`bun build ${join(ROOT, "index.ts")} --compile --outfile ${outputPath}`.cwd(ROOT);
-
-  // Also create a dev-friendly binary without suffix
   try {
     if (existsSync(devOutputPath)) {
       await $`rm ${devOutputPath}`.cwd(BINARIES_DIR);
     }
+    await $`cp ${currentBinary} ${devOutputPath}`.cwd(BINARIES_DIR);
   } catch {
     // Ignore cleanup errors
   }
-  await $`cp ${outputPath} ${devOutputPath}`.cwd(BINARIES_DIR);
 
-  console.log(`Built: ${outputPath}`);
-  console.log(`Linked: ${devOutputPath}`);
+  console.log(`Done! Binaries built for both architectures in ${BINARIES_DIR}`);
 }
 
 build().catch((err) => {

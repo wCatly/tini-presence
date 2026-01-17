@@ -1,6 +1,6 @@
 /**
  * tini-presence
- * 
+ *
  * Discord Rich Presence for Spotify with local file support
  */
 
@@ -15,7 +15,8 @@ import {
 } from "./src/local-files.ts";
 
 let config = getConfig();
-let clientId = config.discordClientId || process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
+let clientId =
+  config.discordClientId || process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
 
 const rpc = new Client({ clientId });
 let presence = createPresenceService(config);
@@ -179,7 +180,7 @@ async function updatePresence(state: SpotifyState) {
     console.log("Cleared presence - not playing");
     emitStatus({
       playing: false,
-      reason: state.track.source !== "local" ? "not-local" : "not-playing",
+      reason: "not-playing",
       title: state.track.title,
       artist: state.track.artist,
       album: state.track.album,
@@ -209,7 +210,9 @@ rpc.on("ready", () => {
 
 rpc.login().catch((err) => {
   if (err.code === 1 || err.message?.includes("timed out")) {
-    console.error("Failed to connect to Discord. Make sure Discord is running.");
+    console.error(
+      "Failed to connect to Discord. Make sure Discord is running."
+    );
     emitStatus({ playing: false, reason: "discord-not-running" });
   } else {
     console.error("Discord RPC error:", err);

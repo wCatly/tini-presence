@@ -28,6 +28,7 @@ struct AppConfig {
     copyparty_api_key: Option<String>,
     copyparty_url: Option<String>,
     copyparty_path: Option<String>,
+    theme: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]

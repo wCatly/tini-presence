@@ -14,6 +14,7 @@ export interface Track {
   durationMs: number;
   id: string;
   source: TrackSource;
+  artworkUrl?: string;
 }
 
 export interface PlaybackState {
@@ -39,7 +40,8 @@ const APPLESCRIPT_LINES = [
   "set trackPos to player position",
   "set trackState to player state as string",
   "set trackId to id of current track",
-  'return trackName & "||" & trackArtist & "||" & trackAlbum & "||" & trackDuration & "||" & trackPos & "||" & trackState & "||" & trackId',
+  "set trackArtworkUrl to artwork url of current track",
+  'return trackName & "||" & trackArtist & "||" & trackAlbum & "||" & trackDuration & "||" & trackPos & "||" & trackState & "||" & trackId & "||" & trackArtworkUrl',
   "else",
   'return "NOT_RUNNING"',
   "end if",
@@ -70,8 +72,16 @@ export async function getSpotifyState(): Promise<SpotifyState> {
     return { isRunning: false };
   }
 
-  const [title, artist, album, durationMs, positionSec, state, trackId] =
-    out.split("||");
+  const [
+    title,
+    artist,
+    album,
+    durationMs,
+    positionSec,
+    state,
+    trackId,
+    artworkUrl,
+  ] = out.split("||");
 
   return {
     isRunning: true,
@@ -82,6 +92,8 @@ export async function getSpotifyState(): Promise<SpotifyState> {
       durationMs: parseNumber(durationMs),
       id: trackId,
       source: parseTrackSource(trackId),
+      artworkUrl:
+        artworkUrl && artworkUrl !== "missing value" ? artworkUrl : undefined,
     },
     positionMs: parseNumber(positionSec) * 1000,
     state: parsePlayerState(state),

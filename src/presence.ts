@@ -1,6 +1,6 @@
 /**
  * Presence Service
- * 
+ *
  * Orchestrates the full flow for Discord Rich Presence:
  * 1. Find local file from Spotify track
  * 2. Extract cover art
@@ -42,13 +42,13 @@ export class PresenceService {
    * - File not found
    * - No cover art in file
    * - Upload failed
-   * 
+   *
    * Results are cached by track ID to avoid repeated requests.
    */
   async getCoverUrl(track: Track): Promise<string | null> {
-    // Only handle local files
+    // For non-local tracks, return artworkUrl if available
     if (track.source !== "local") {
-      return null;
+      return track.artworkUrl ?? null;
     }
 
     if (!this.uploadService) {
@@ -88,13 +88,13 @@ export class PresenceService {
           extension: getExtension(cover.mimeType),
         }
       );
-      
+
       if (result.existed) {
         console.log(`[presence] Cover exists: ${result.url}`);
       } else {
         console.log(`[presence] Cover uploaded: ${result.url}`);
       }
-      
+
       this.coverUrlCache.set(track.id, result.url);
       return result.url;
     } catch (err) {
@@ -104,23 +104,12 @@ export class PresenceService {
     }
   }
 
-  /**
-   * Build Discord activity from Spotify state
-   * Only shows presence for LOCAL files (not streaming tracks)
-   * Uses ActivityType.Listening for Spotify-like display with progress bar
-   */
   buildActivity(state: SpotifyState, coverUrl: string | null) {
     if (!state.isRunning || state.state !== "playing") {
       return null;
     }
 
     const { track, positionMs } = state;
-
-    // Only show presence for local files
-    if (track.source !== "local") {
-      return null;
-    }
-
     const now = Date.now();
 
     return {
@@ -132,8 +121,8 @@ export class PresenceService {
       endTimestamp: now + (track.durationMs - positionMs),
       largeImageKey: coverUrl || "spotify",
       largeImageText: track.album,
-      smallImageKey: "local",
-      smallImageText: "Local File",
+      smallImageKey: track.source === "local" ? "local" : "spotify-small",
+      smallImageText: track.source === "local" ? "Local File" : "Spotify",
       instance: false,
     };
   }
@@ -163,7 +152,9 @@ export class PresenceService {
 /**
  * Create presence service from environment variables
  */
-export function createPresenceService(configOverride?: AppConfig): PresenceService {
+export function createPresenceService(
+  configOverride?: AppConfig
+): PresenceService {
   const fileConfig = configOverride ?? getConfig();
   const apiKey = fileConfig.copypartyApiKey || process.env.COPYPARTY_API_KEY;
 
@@ -172,8 +163,11 @@ export function createPresenceService(configOverride?: AppConfig): PresenceServi
   if (apiKey) {
     config.upload = {
       baseUrl:
-        fileConfig.copypartyUrl || process.env.COPYPARTY_URL || "https://pifiles.florian.lt",
-      uploadPath: fileConfig.copypartyPath || process.env.COPYPARTY_PATH || "/cdn",
+        fileConfig.copypartyUrl ||
+        process.env.COPYPARTY_URL ||
+        "https://pifiles.florian.lt",
+      uploadPath:
+        fileConfig.copypartyPath || process.env.COPYPARTY_PATH || "/cdn",
       apiKey,
     };
   }

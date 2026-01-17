@@ -2,13 +2,21 @@ import { useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Separator } from "@/components/ui/separator";
 import { UpdateBanner } from "./UpdateBanner";
+import {
+  Settings,
+  Power,
+  Music,
+  Folder,
+  FileText,
+  Check,
+  X,
+  ChevronDown,
+  ScrollText,
+} from "lucide-react";
 import "@/index.css";
 
 interface TrackStatus {
@@ -23,12 +31,15 @@ interface TrackStatus {
   durationMs?: number;
 }
 
+type ThemeColor = "cyan" | "red" | "green" | "purple" | "orange";
+
 interface AppConfig {
   musicFolders: string[];
   discordClientId?: string;
   copypartyApiKey?: string;
   copypartyUrl?: string;
   copypartyPath?: string;
+  theme?: ThemeColor;
 }
 
 const defaultConfig: AppConfig = {
@@ -37,16 +48,23 @@ const defaultConfig: AppConfig = {
   copypartyApiKey: "",
   copypartyUrl: "https://pifiles.florian.lt",
   copypartyPath: "/cdn",
+  theme: "cyan",
 };
 
+const themeOptions: { value: ThemeColor; label: string; color: string }[] = [
+  { value: "cyan", label: "Cyan", color: "bg-[oklch(0.75_0.15_200)]" },
+  { value: "red", label: "Red", color: "bg-[oklch(0.65_0.22_25)]" },
+  { value: "green", label: "Green", color: "bg-[oklch(0.72_0.19_145)]" },
+  { value: "purple", label: "Purple", color: "bg-[oklch(0.7_0.18_300)]" },
+  { value: "orange", label: "Orange", color: "bg-[oklch(0.75_0.18_55)]" },
+];
+
 function formatTime(ms?: number) {
-  if (!ms || Number.isNaN(ms)) return "00:00";
+  if (!ms || Number.isNaN(ms)) return "0:00";
   const totalSeconds = Math.max(0, Math.floor(ms / 1000));
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
-  return `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
 function App() {
@@ -54,8 +72,8 @@ function App() {
   const [trackStatus, setTrackStatus] = useState<TrackStatus | null>(null);
   const [config, setConfig] = useState<AppConfig>(defaultConfig);
   const [showSettings, setShowSettings] = useState(false);
-  const [logs, setLogs] = useState<{ id: number; text: string }[]>([]);
   const [appVersion, setAppVersion] = useState<string>("");
+  const [logs, setLogs] = useState<{ id: number; text: string }[]>([]);
 
   useEffect(() => {
     invoke<boolean>("get_service_status").then(setIsRunning);
@@ -86,7 +104,7 @@ function App() {
 
     const unlistenLog = listen<string>("sidecar-log", (event) => {
       setLogs((prev) =>
-        [{ id: Date.now(), text: event.payload }, ...prev].slice(0, 8)
+        [{ id: Date.now(), text: event.payload }, ...prev].slice(0, 20)
       );
     });
 
@@ -125,291 +143,450 @@ function App() {
       )
     : 0;
 
+  const themeClass = `theme-${config.theme || "cyan"}`;
+
   return (
-    <div className="flex h-full flex-col gap-3 rounded-xl bg-background/95 p-4 backdrop-blur-xl">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-border pb-3">
-        <div className="text-primary">
-          <svg width="28" height="28" viewBox="0 0 24 24" fill="currentColor">
-            <title>tini-presence</title>
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" />
-          </svg>
-        </div>
-        <h1 className="flex-1 text-base font-semibold tracking-tight">
-          tini-presence
-        </h1>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-7 w-7"
-          onClick={() => {
-            setShowSettings((v) => !v);
-            invoke("request_config");
-          }}
-        >
-          ⚙️
-        </Button>
-      </div>
-
-      {/* Update Banner */}
-      <UpdateBanner />
-
-      {showSettings ? (
-        <div className="flex-1 overflow-y-auto -mr-2 pr-2">
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <span className="font-medium">Settings</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowSettings(false)}
-              >
-                Done
-              </Button>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="discord-client-id">Discord Client ID</Label>
-              <Input
-                id="discord-client-id"
-                placeholder="Your Discord app client ID"
-                value={config.discordClientId || ""}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    discordClientId: e.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="copyparty-api-key">Copyparty API Key</Label>
-              <Input
-                id="copyparty-api-key"
-                placeholder="Optional"
-                value={config.copypartyApiKey || ""}
-                onChange={(e) =>
-                  setConfig((prev) => ({
-                    ...prev,
-                    copypartyApiKey: e.target.value,
-                  }))
-                }
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="copyparty-url">Copyparty URL</Label>
-                <Input
-                  id="copyparty-url"
-                  placeholder="https://pifiles.florian.lt"
-                  value={config.copypartyUrl || ""}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      copypartyUrl: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="copyparty-path">Path</Label>
-                <Input
-                  id="copyparty-path"
-                  placeholder="/cdn"
-                  value={config.copypartyPath || ""}
-                  onChange={(e) =>
-                    setConfig((prev) => ({
-                      ...prev,
-                      copypartyPath: e.target.value,
-                    }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Music Folders</Label>
-              <div className="rounded-md border border-border bg-muted/30 p-2">
-                {config.musicFolders.length === 0 ? (
-                  <span className="text-xs text-muted-foreground">
-                    No folders added yet
-                  </span>
-                ) : (
-                  <div className="flex flex-col gap-1">
-                    {config.musicFolders.map((folder) => (
-                      <span
-                        key={folder}
-                        className="truncate text-xs text-muted-foreground"
-                      >
-                        {folder}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <div className="flex gap-2">
-                <Button variant="secondary" size="sm" onClick={handleAddFolder}>
-                  Add folder
-                </Button>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={handleOpenConfig}
-                >
-                  Open config
-                </Button>
-              </div>
-            </div>
-
-            <Button onClick={handleSaveConfig}>Save settings</Button>
-
-            <div className="space-y-2">
-              <Label>Sidecar Logs</Label>
-              <div className="max-h-24 overflow-auto rounded-md border border-border bg-muted/30 p-2">
-                {logs.length === 0 ? (
-                  <span className="text-xs text-muted-foreground">
-                    No logs yet
-                  </span>
-                ) : (
-                  logs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="text-[10px] text-muted-foreground break-all"
-                    >
-                      {log.text}
-                    </div>
-                  ))
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : (
-        <>
-          {/* Status Card */}
-          <Card>
-            <CardContent className="flex items-center gap-3 p-3">
-              <div
-                className={`h-3 w-3 shrink-0 rounded-full ${
-                  isRunning
-                    ? "bg-primary shadow-[0_0_8px] shadow-primary animate-pulse-slow"
-                    : "bg-muted-foreground"
-                }`}
-              />
-              <div className="flex flex-col">
-                <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
-                  Discord Presence
-                </span>
-                <span
-                  className={`text-sm font-medium ${
-                    isRunning ? "text-primary" : "text-muted-foreground"
-                  }`}
-                >
-                  {isRunning ? "Active" : "Stopped"}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Track Card */}
-          <Card className="flex-1">
-            <CardContent className="flex h-full items-center gap-3 p-3">
-              {trackStatus?.playing ? (
-                <>
-                  <div className="h-14 w-14 shrink-0 overflow-hidden rounded-lg bg-muted">
-                    {trackStatus.coverUrl ? (
-                      <img
-                        src={trackStatus.coverUrl}
-                        alt="Cover"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-2xl text-muted-foreground">
-                        ♪
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="truncate text-sm font-semibold">
-                      {trackStatus.title}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground">
-                      {trackStatus.artist}
-                    </span>
-                    <span className="truncate text-xs text-muted-foreground/60">
-                      {trackStatus.album}
-                    </span>
-                    <div className="mt-1 flex items-center gap-2">
-                      <span className="text-[10px] text-muted-foreground">
-                        {formatTime(trackStatus.positionMs)}
-                      </span>
-                      <div className="h-1 flex-1 overflow-hidden rounded-full bg-muted">
-                        <div
-                          className="h-full bg-primary transition-all duration-300"
-                          style={{ width: `${progressPercent}%` }}
-                        />
-                      </div>
-                      <span className="text-[10px] text-muted-foreground">
-                        {formatTime(trackStatus.durationMs)}
-                      </span>
-                    </div>
-                  </div>
-                </>
+    <div className={`h-full flex flex-col ${themeClass}`}>
+      <div className="rounded-2xl bg-card border border-border overflow-hidden shadow-2xl shadow-black/20 h-full flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-border">
+          <div className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-primary/10 overflow-hidden flex items-center justify-center">
+              {showSettings ? (
+                <Settings className="w-4 h-4 text-primary" />
               ) : (
-                <div className="flex flex-col gap-1">
-                  <span className="text-sm font-medium text-muted-foreground">
-                    {trackStatus?.reason === "spotify-not-running"
-                      ? "Spotify is closed"
-                      : "Not playing"}
-                  </span>
-                  <span className="text-xs text-muted-foreground/60">
-                    {trackStatus?.reason === "not-local"
-                      ? "Only local files show presence"
-                      : "Start a local track to show status"}
+                <img
+                  src="/app-icon.png"
+                  alt="Logo"
+                  className="w-5 h-5 pointer-events-none"
+                />
+              )}
+            </div>
+            <div className="flex flex-col">
+              <h1 className="text-sm font-semibold text-foreground tracking-tight leading-tight">
+                tini-presence
+              </h1>
+              {showSettings ? (
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  Settings
+                </span>
+              ) : (
+                <div className="flex items-center gap-1.5">
+                  <div
+                    className={`w-1.5 h-1.5 rounded-full ${
+                      isRunning
+                        ? "bg-primary animate-pulse-glow text-primary"
+                        : "bg-muted-foreground/40"
+                    }`}
+                  />
+                  <span
+                    className={`text-[10px] font-medium ${
+                      isRunning ? "text-primary" : "text-muted-foreground"
+                    }`}
+                  >
+                    {isRunning ? "Connected" : "Offline"}
                   </span>
                 </div>
               )}
-            </CardContent>
-          </Card>
-
-          {/* Info */}
-          <p className="px-1 text-xs text-muted-foreground">
-            {isRunning
-              ? "Showing your Spotify local files on Discord"
-              : "Click Start to begin sharing your music"}
-          </p>
-
-          {/* Action */}
-          <Button
-            className={
-              isRunning
-                ? "bg-destructive hover:bg-destructive/90"
-                : "btn-spotify"
-            }
-            onClick={handleToggle}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSettings(!showSettings);
+              invoke("request_config");
+            }}
+            className="w-8 h-8 rounded-lg bg-secondary/60 hover:bg-secondary flex items-center justify-center transition-colors"
           >
-            {isRunning ? "Stop" : "Start"}
-          </Button>
+            {showSettings ? (
+              <X className="w-4 h-4 text-muted-foreground" />
+            ) : (
+              <Settings className="w-4 h-4 text-muted-foreground" />
+            )}
+          </button>
+        </div>
 
-          {/* Footer */}
-          <Separator />
-          <div className="flex items-center justify-between">
-            <Badge variant="secondary" className="text-[10px] font-normal">
-              v{appVersion}
-            </Badge>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-6 text-xs"
-              onClick={handleQuit}
+        {/* Update Banner */}
+        <UpdateBanner />
+
+        {showSettings ? (
+          <SettingsView
+            config={config}
+            setConfig={setConfig}
+            onSave={handleSaveConfig}
+            onAddFolder={handleAddFolder}
+            onOpenConfig={handleOpenConfig}
+            logs={logs}
+          />
+        ) : (
+          <MainView
+            isRunning={isRunning}
+            trackStatus={trackStatus}
+            progressPercent={progressPercent}
+            onToggle={handleToggle}
+            onQuit={handleQuit}
+            appVersion={appVersion}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function MainView({
+  isRunning,
+  trackStatus,
+  progressPercent,
+  onToggle,
+  onQuit,
+  appVersion,
+}: {
+  isRunning: boolean;
+  trackStatus: TrackStatus | null;
+  progressPercent: number;
+  onToggle: () => void;
+  onQuit: () => void;
+  appVersion: string;
+}) {
+  return (
+    <div className="flex flex-col">
+      {/* Now Playing Section */}
+      <div className="p-4">
+        <div className="rounded-xl bg-secondary/50 p-4">
+          {trackStatus?.title ? (
+            <div className="flex items-start gap-4 w-full animate-slide-up">
+              <div className="w-16 h-16 rounded-xl bg-muted overflow-hidden flex-shrink-0 shadow-lg">
+                {trackStatus.coverUrl ? (
+                  <img
+                    src={trackStatus.coverUrl}
+                    alt="Album cover"
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className="w-full h-full flex items-center justify-center">
+                    <Music className="w-8 h-8 text-muted-foreground" />
+                  </div>
+                )}
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground truncate">
+                  {trackStatus.title}
+                </p>
+                <p className="text-xs text-muted-foreground truncate mt-0.5">
+                  {trackStatus.artist}
+                </p>
+                <p className="text-xs text-muted-foreground/60 truncate">
+                  {trackStatus.album}
+                </p>
+                <div className="flex items-center gap-2 mt-3">
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {formatTime(trackStatus.positionMs)}
+                  </span>
+                  <div className="flex-1 h-1 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className="h-full bg-primary transition-all duration-300 rounded-full"
+                      style={{ width: `${progressPercent}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                    {formatTime(trackStatus.durationMs)}
+                  </span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="w-full">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-10 h-10 rounded-lg bg-muted flex items-center justify-center">
+                  <Music className="w-5 h-5 text-muted-foreground/50" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">
+                    {trackStatus?.reason === "spotify-not-running"
+                      ? "Spotify is closed"
+                      : "Not playing"}
+                  </p>
+                  <p className="text-xs text-muted-foreground/60">
+                    {trackStatus?.reason === "spotify-not-running"
+                      ? "Spotify is closed"
+                      : "Start a track to show status"}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Description */}
+      <div className="px-4 pb-3">
+        <p className="text-xs text-muted-foreground text-center">
+          {isRunning
+            ? "Showing your Spotify activity on Discord"
+            : "Click Start to begin sharing your music"}
+        </p>
+      </div>
+
+      {/* Action Button */}
+      <div className="px-4 pb-4">
+        <Button
+          onClick={onToggle}
+          className={`w-full h-11 text-sm font-semibold transition-all ${
+            isRunning
+              ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground"
+              : "bg-primary hover:bg-primary/90 text-primary-foreground"
+          }`}
+        >
+          <Power className="w-4 h-4 mr-2" />
+          {isRunning ? "Stop" : "Start"}
+        </Button>
+      </div>
+
+      {/* Footer */}
+      <div className="flex items-center justify-between px-4 py-2.5 border-t border-border mt-auto">
+        <span className="text-[10px] text-muted-foreground/70 font-medium">
+          v{appVersion}
+        </span>
+        <span className="text-[10px] text-muted-foreground">
+          made with <span className="text-red-500">&#9829;</span> by florian
+        </span>
+        <button
+          type="button"
+          onClick={onQuit}
+          className="text-[10px] text-muted-foreground hover:text-foreground transition-colors font-medium"
+        >
+          Quit
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SettingsView({
+  config,
+  setConfig,
+  onSave,
+  onAddFolder,
+  onOpenConfig,
+  logs,
+}: {
+  config: AppConfig;
+  setConfig: React.Dispatch<React.SetStateAction<AppConfig>>;
+  onSave: () => void;
+  onAddFolder: () => void;
+  onOpenConfig: () => void;
+  logs: { id: number; text: string }[];
+}) {
+  const [logsExpanded, setLogsExpanded] = useState(false);
+
+  return (
+    <div className="flex flex-col animate-slide-up">
+      <div className="px-4 py-4 space-y-5 max-h-[350px] overflow-y-auto">
+        {/* Theme Selector */}
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground">
+            Theme Color
+          </Label>
+          <div className="flex gap-2">
+            {themeOptions.map((theme) => (
+              <button
+                type="button"
+                key={theme.value}
+                onClick={() => {
+                  const newConfig = { ...config, theme: theme.value };
+                  setConfig(newConfig);
+                  invoke("update_config", { config: newConfig });
+                }}
+                className={`w-8 h-8 rounded-lg ${
+                  theme.color
+                } transition-all hover:scale-110 ${
+                  config.theme === theme.value
+                    ? "ring-2 ring-foreground ring-offset-2 ring-offset-card"
+                    : ""
+                }`}
+                title={theme.label}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Discord Client ID */}
+        <div className="space-y-2">
+          <Label
+            htmlFor="discord-client-id"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Discord Client ID
+          </Label>
+          <Input
+            id="discord-client-id"
+            placeholder="Your Discord app client ID"
+            value={config.discordClientId || ""}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                discordClientId: e.target.value,
+              }))
+            }
+            className="h-10 bg-input border-border text-sm"
+          />
+        </div>
+
+        {/* Copyparty API Key */}
+        <div className="space-y-2">
+          <Label
+            htmlFor="copyparty-api-key"
+            className="text-xs font-medium text-muted-foreground"
+          >
+            Copyparty API Key
+          </Label>
+          <Input
+            id="copyparty-api-key"
+            placeholder="Optional"
+            value={config.copypartyApiKey || ""}
+            onChange={(e) =>
+              setConfig((prev) => ({
+                ...prev,
+                copypartyApiKey: e.target.value,
+              }))
+            }
+            className="h-10 bg-input border-border text-sm"
+          />
+        </div>
+
+        {/* URL and Path */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label
+              htmlFor="copyparty-url"
+              className="text-xs font-medium text-muted-foreground"
             >
-              Quit
+              Copyparty URL
+            </Label>
+            <Input
+              id="copyparty-url"
+              placeholder="https://example.com"
+              value={config.copypartyUrl || ""}
+              onChange={(e) =>
+                setConfig((prev) => ({ ...prev, copypartyUrl: e.target.value }))
+              }
+              className="h-10 bg-input border-border text-sm"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label
+              htmlFor="copyparty-path"
+              className="text-xs font-medium text-muted-foreground"
+            >
+              Path
+            </Label>
+            <Input
+              id="copyparty-path"
+              placeholder="/cdn"
+              value={config.copypartyPath || ""}
+              onChange={(e) =>
+                setConfig((prev) => ({
+                  ...prev,
+                  copypartyPath: e.target.value,
+                }))
+              }
+              className="h-10 bg-input border-border text-sm"
+            />
+          </div>
+        </div>
+
+        {/* Music Folders */}
+        <div className="space-y-2">
+          <Label className="text-xs font-medium text-muted-foreground">
+            Music Folders
+          </Label>
+          <div className="rounded-lg border border-border bg-input p-3 min-h-[60px]">
+            {config.musicFolders.length === 0 ? (
+              <span className="text-xs text-muted-foreground/60">
+                No folders added yet
+              </span>
+            ) : (
+              <div className="space-y-2">
+                {config.musicFolders.map((folder) => (
+                  <div
+                    key={folder}
+                    className="flex items-center gap-2 text-xs text-muted-foreground"
+                  >
+                    <Folder className="w-3.5 h-3.5 text-primary/70" />
+                    <span className="truncate">{folder}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 text-xs font-medium"
+              onClick={onAddFolder}
+            >
+              <Folder className="w-3.5 h-3.5 mr-1.5" />
+              Add folder
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="h-8 text-xs font-medium"
+              onClick={onOpenConfig}
+            >
+              <FileText className="w-3.5 h-3.5 mr-1.5" />
+              Open config
             </Button>
           </div>
-        </>
-      )}
+        </div>
+
+        {/* Collapsible Logs */}
+        <div className="space-y-2">
+          <button
+            type="button"
+            onClick={() => setLogsExpanded(!logsExpanded)}
+            className="flex items-center gap-2 text-xs font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+          >
+            <ScrollText className="w-3.5 h-3.5" />
+            <span>Sidecar Logs</span>
+            <ChevronDown
+              className={`w-3.5 h-3.5 ml-auto transition-transform ${
+                logsExpanded ? "rotate-180" : ""
+              }`}
+            />
+          </button>
+          {logsExpanded && (
+            <div className="rounded-lg border border-border bg-muted/30 p-2 max-h-24 overflow-y-auto">
+              {logs.length === 0 ? (
+                <span className="text-xs text-muted-foreground/60">
+                  No logs yet
+                </span>
+              ) : (
+                logs.map((log) => (
+                  <div
+                    key={log.id}
+                    className="text-[10px] text-muted-foreground break-all"
+                  >
+                    {log.text}
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Save Button - Sticky at bottom */}
+      <div className="px-4 pb-4 pt-2 border-t border-border">
+        <Button
+          onClick={onSave}
+          className="w-full h-10 bg-primary hover:bg-primary/90 text-primary-foreground text-sm font-semibold"
+        >
+          <Check className="w-4 h-4 mr-2" />
+          Save settings
+        </Button>
+      </div>
     </div>
   );
 }
