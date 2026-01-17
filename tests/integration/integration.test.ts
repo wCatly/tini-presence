@@ -2,9 +2,9 @@ import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import { resolve } from "node:path";
 import { Client } from "@xhayper/discord-rpc";
 
-import { extractCoverArt, getCoverFilename } from "../../src/cover.ts";
+import { extractCoverArt, getExtension, getFolderName } from "../../src/cover.ts";
 import { spotify } from "../../src/spotify.ts";
-import { UploadService } from "../../src/upload.ts";
+import { UploadService, getDeviceId } from "../../src/upload.ts";
 
 const TEST_MUSIC_DIR = resolve(import.meta.dir, "../../test-music");
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
@@ -97,7 +97,7 @@ describe("Integration Tests", () => {
 
   describe("Upload Service", () => {
     test(
-      "uploads file to Copyparty",
+      "uploads cover with organized path",
       async () => {
         if (!COPYPARTY_API_KEY) {
           console.log("COPYPARTY_API_KEY not set, skipping upload test");
@@ -110,18 +110,26 @@ describe("Integration Tests", () => {
           apiKey: COPYPARTY_API_KEY,
         });
 
-        const cover = await extractCoverArt(`${TEST_MUSIC_DIR}/Test Song One.mp3`);
+        const filePath = `${TEST_MUSIC_DIR}/Test Song One.mp3`;
+        const cover = await extractCoverArt(filePath);
         expect(cover).not.toBeNull();
 
         if (cover) {
-          const filename = getCoverFilename(cover);
-          const result = await uploadService.upload(
+          const result = await uploadService.uploadCover(
             cover.data,
-            filename,
-            cover.mimeType
+            cover.mimeType,
+            {
+              songTitle: "Test Song One",
+              folderName: getFolderName(filePath),
+              hash: cover.hash,
+              extension: getExtension(cover.mimeType),
+            }
           );
 
           expect(result.url).toMatch(/^https?:\/\//);
+          expect(result.filename).toContain("tini-presence");
+          expect(result.filename).toContain(getDeviceId());
+          expect(result.filename).toContain("Test_Song_One");
           console.log(`Uploaded to: ${result.url}`);
 
           // Verify URL is accessible
@@ -133,7 +141,7 @@ describe("Integration Tests", () => {
     );
 
     test(
-      "caches uploaded files",
+      "caches uploaded files by hash",
       async () => {
         if (!COPYPARTY_API_KEY) {
           console.log("COPYPARTY_API_KEY not set, skipping cache test");
@@ -146,26 +154,35 @@ describe("Integration Tests", () => {
           apiKey: COPYPARTY_API_KEY,
         });
 
-        const cover = await extractCoverArt(`${TEST_MUSIC_DIR}/Test Song One.mp3`);
+        const filePath = `${TEST_MUSIC_DIR}/Test Song One.mp3`;
+        const cover = await extractCoverArt(filePath);
         expect(cover).not.toBeNull();
 
         if (cover) {
-          const filename = getCoverFilename(cover);
+          uploadService.clearCache();
 
           // First upload
-          const result1 = await uploadService.uploadCached(
+          const result1 = await uploadService.uploadCover(
             cover.data,
-            filename,
             cover.mimeType,
-            cover.hash
+            {
+              songTitle: "Test Song One",
+              folderName: getFolderName(filePath),
+              hash: cover.hash,
+              extension: getExtension(cover.mimeType),
+            }
           );
 
-          // Second upload should return same URL (cached)
-          const result2 = await uploadService.uploadCached(
+          // Second upload should return same URL (cached by hash)
+          const result2 = await uploadService.uploadCover(
             cover.data,
-            filename,
             cover.mimeType,
-            cover.hash
+            {
+              songTitle: "Test Song One",
+              folderName: getFolderName(filePath),
+              hash: cover.hash,
+              extension: getExtension(cover.mimeType),
+            }
           );
 
           expect(result1.url).toBe(result2.url);

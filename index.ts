@@ -1,6 +1,6 @@
 import { Client } from "@xhayper/discord-rpc";
 
-import { extractCoverArt, getCoverFilename } from "./src/cover.ts";
+import { extractCoverArt, getExtension, getFolderName } from "./src/cover.ts";
 import { localFiles } from "./src/local-files.ts";
 import { spotify, type SpotifyState } from "./src/spotify.ts";
 import { UploadService } from "./src/upload.ts";
@@ -41,13 +41,13 @@ async function getCoverUrl(state: SpotifyState): Promise<string | null> {
   }
 
   try {
-    const filename = getCoverFilename(cover);
-    const result = await uploadService.uploadCached(
-      cover.data,
-      filename,
-      cover.mimeType,
-      cover.hash
-    );
+    // Upload with organized path: tini-presence/{device}/{folder}/{title}-{hash}.jpg
+    const result = await uploadService.uploadCover(cover.data, cover.mimeType, {
+      songTitle: track.title,
+      folderName: getFolderName(filePath),
+      hash: cover.hash,
+      extension: getExtension(cover.mimeType),
+    });
     return result.url;
   } catch (err) {
     console.error("Failed to upload cover:", err);

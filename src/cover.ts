@@ -1,6 +1,7 @@
 import * as mm from "music-metadata";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
+import path from "node:path";
 
 export interface CoverArt {
   data: Uint8Array;
@@ -43,4 +44,10 @@ export function getExtension(mimeType: string): string {
 
 export function getCoverFilename(cover: CoverArt): string {
   return `${cover.hash}.${getExtension(cover.mimeType)}`;
+}
+
+// Get the parent folder name from a file path
+// e.g., "/Users/florian/Music/song.mp3" -> "Music"
+export function getFolderName(filePath: string): string {
+  return path.basename(path.dirname(filePath));
 }

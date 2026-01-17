@@ -6,6 +6,8 @@ import {
   getCacheSize,
   UploadService,
   UploadError,
+  getDeviceId,
+  buildCoverPath,
 } from "../../src/upload.ts";
 import type { UploadConfig, RetryConfig } from "../../src/upload.ts";
 
@@ -266,6 +268,73 @@ describe("Upload Service", () => {
       } finally {
         restore();
       }
+    });
+
+    test("uploadCover builds correct path", async () => {
+      const restore = mockFetch(() =>
+        Promise.resolve(new Response("https://example.com/cdn/uploaded.jpg"))
+      );
+
+      const service = new UploadService(testConfig, fastRetryConfig);
+
+      try {
+        clearCache();
+        const result = await service.uploadCover(
+          new Uint8Array([1, 2, 3]),
+          "image/jpeg",
+          {
+            songTitle: "My Song",
+            folderName: "Music",
+            hash: "abc123",
+            extension: "jpg",
+          }
+        );
+
+        // Should contain device ID, folder, song title, and hash
+        expect(result.filename).toContain("tini-presence");
+        expect(result.filename).toContain("Music");
+        expect(result.filename).toContain("My_Song");
+        expect(result.filename).toContain("abc123");
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("Device ID", () => {
+    test("getDeviceId returns consistent ID", () => {
+      const id1 = getDeviceId();
+      const id2 = getDeviceId();
+      expect(id1).toBe(id2);
+      expect(id1.length).toBe(8);
+    });
+  });
+
+  describe("buildCoverPath", () => {
+    test("builds correct path structure", () => {
+      const path = buildCoverPath({
+        songTitle: "Test Song",
+        folderName: "My Music",
+        hash: "abcd1234",
+        extension: "jpg",
+      });
+
+      expect(path).toMatch(/^tini-presence\/[a-f0-9]{8}\/My_Music\/Test_Song-abcd1234\.jpg$/);
+    });
+
+    test("sanitizes special characters", () => {
+      const path = buildCoverPath({
+        songTitle: "Song: With <Special> Chars?",
+        folderName: "Music/Folder",
+        hash: "xyz789",
+        extension: "png",
+      });
+
+      expect(path).not.toContain(":");
+      expect(path).not.toContain("<");
+      expect(path).not.toContain(">");
+      expect(path).not.toContain("?");
+      expect(path).toContain("xyz789.png");
     });
   });
 });
