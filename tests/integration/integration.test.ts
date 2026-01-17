@@ -145,7 +145,7 @@ describe("Integration Tests", () => {
     );
 
     test(
-      "returns same URL for same file (Copyparty deduplication)",
+      "skips upload if file already exists on CDN",
       async () => {
         if (!COPYPARTY_API_KEY) {
           console.log("COPYPARTY_API_KEY not set, skipping test");
@@ -170,14 +170,14 @@ describe("Integration Tests", () => {
             extension: getExtension(cover.mimeType),
           };
 
-          // First upload
+          // First upload (may or may not exist)
           const result1 = await uploadService.uploadCover(
             cover.data,
             cover.mimeType,
             options
           );
 
-          // Second upload - Copyparty returns same URL (deduplication)
+          // Second call should find existing file (no re-upload)
           const result2 = await uploadService.uploadCover(
             cover.data,
             cover.mimeType,
@@ -186,6 +186,12 @@ describe("Integration Tests", () => {
 
           // Both should return the same URL
           expect(result1.url).toBe(result2.url);
+          // Second call should report file existed
+          expect(result2.existed).toBe(true);
+          
+          // Verify coverExists works
+          const existingUrl = await uploadService.coverExists(options);
+          expect(existingUrl).not.toBeNull();
         }
       },
       15000

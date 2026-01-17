@@ -16,6 +16,7 @@ export interface RetryConfig {
 export interface UploadResult {
   url: string;
   filename: string;
+  existed: boolean;  // true if file already existed on CDN
 }
 
 export interface CoverUploadOptions {
@@ -87,13 +88,37 @@ function getRetryDelay(attempt: number, config: RetryConfig): number {
 }
 
 /**
+ * Check if file exists on CDN using HEAD request
+ */
+export async function fileExists(
+  filePath: string,
+  config: UploadConfig
+): Promise<string | null> {
+  const uploadPath = config.uploadPath || "/cdn";
+  const url = `${config.baseUrl}${uploadPath}/${filePath}`;
+
+  const auth = Buffer.from(
+    `${config.username || "cdn-api"}:${config.apiKey}`
+  ).toString("base64");
+
+  try {
+    const res = await fetch(url, {
+      method: "HEAD",
+      headers: { Authorization: `Basic ${auth}` },
+    });
+    
+    if (res.ok) {
+      return url;
+    }
+  } catch {
+    // Network error, assume file doesn't exist
+  }
+
+  return null;
+}
+
+/**
  * Upload file to CDN using PUT
- * 
- * With Copyparty's u2ow setting, uploading the same filename will:
- * - Overwrite if content is different
- * - Return existing URL if content is the same (deduplication)
- * 
- * This means we don't need to check if file exists first - just upload!
  */
 export async function uploadFile(
   data: Uint8Array,
@@ -124,7 +149,7 @@ export async function uploadFile(
 
       if (res.ok) {
         const url = (await res.text()).trim();
-        return { url, filename: filePath };
+        return { url, filename: filePath, existed: false };
       }
 
       const retryable = isRetryableStatus(res.status);
@@ -160,6 +185,27 @@ export async function uploadFile(
   throw lastError || new UploadError("Upload failed after retries", undefined, false);
 }
 
+/**
+ * Upload file only if it doesn't already exist on CDN
+ * Returns existing URL if file exists, otherwise uploads
+ */
+export async function uploadIfNotExists(
+  data: Uint8Array,
+  filePath: string,
+  mimeType: string,
+  config: UploadConfig,
+  retryConfig?: RetryConfig
+): Promise<UploadResult> {
+  // Check if file already exists
+  const existingUrl = await fileExists(filePath, config);
+  if (existingUrl) {
+    return { url: existingUrl, filename: filePath, existed: true };
+  }
+
+  // Upload new file
+  return uploadFile(data, filePath, mimeType, config, retryConfig);
+}
+
 export class UploadService {
   private config: UploadConfig;
   private retryConfig: RetryConfig;
@@ -169,6 +215,9 @@ export class UploadService {
     this.retryConfig = { ...DEFAULT_RETRY_CONFIG, ...retryConfig };
   }
 
+  /**
+   * Upload file (always uploads, even if exists)
+   */
   async upload(
     data: Uint8Array,
     filePath: string,
@@ -178,10 +227,15 @@ export class UploadService {
   }
 
   /**
+   * Check if file exists on CDN
+   */
+  async exists(filePath: string): Promise<string | null> {
+    return fileExists(filePath, this.config);
+  }
+
+  /**
    * Upload cover art with organized path structure
-   * 
-   * Copyparty handles deduplication - same file = same URL returned
-   * No need to check if file exists first!
+   * Only uploads if file doesn't already exist (saves bandwidth)
    */
   async uploadCover(
     data: Uint8Array,
@@ -189,6 +243,14 @@ export class UploadService {
     options: CoverUploadOptions
   ): Promise<UploadResult> {
     const filePath = buildCoverPath(options);
-    return this.upload(data, filePath, mimeType);
+    return uploadIfNotExists(data, filePath, mimeType, this.config, this.retryConfig);
+  }
+
+  /**
+   * Check if cover already exists on CDN
+   */
+  async coverExists(options: CoverUploadOptions): Promise<string | null> {
+    const filePath = buildCoverPath(options);
+    return this.exists(filePath);
   }
 }

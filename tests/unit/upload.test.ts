@@ -1,6 +1,8 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import {
   uploadFile,
+  uploadIfNotExists,
+  fileExists,
   UploadService,
   UploadError,
   buildCoverPath,
@@ -96,6 +98,7 @@ describe("Upload Service", () => {
           fastRetryConfig
         );
         expect(result.url).toBe("https://example.com/cdn/test.jpg");
+        expect(result.existed).toBe(false);
         expect(attempts).toBe(3);
       } finally {
         restore();
@@ -146,7 +149,7 @@ describe("Upload Service", () => {
       }
     });
 
-    test("successful upload returns URL", async () => {
+    test("successful upload returns URL with existed=false", async () => {
       const restore = mockFetch(() =>
         Promise.resolve(new Response("https://example.com/cdn/uploaded.jpg"))
       );
@@ -161,6 +164,104 @@ describe("Upload Service", () => {
         );
         expect(result.url).toBe("https://example.com/cdn/uploaded.jpg");
         expect(result.filename).toBe("test.jpg");
+        expect(result.existed).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("fileExists", () => {
+    test("returns URL if file exists (200)", async () => {
+      const restore = mockFetch(() =>
+        Promise.resolve(new Response(null, { status: 200 }))
+      );
+
+      try {
+        const url = await fileExists("test.jpg", testConfig);
+        expect(url).toBe("https://example.com/cdn/test.jpg");
+      } finally {
+        restore();
+      }
+    });
+
+    test("returns null if file doesn't exist (404)", async () => {
+      const restore = mockFetch(() =>
+        Promise.resolve(new Response(null, { status: 404 }))
+      );
+
+      try {
+        const url = await fileExists("test.jpg", testConfig);
+        expect(url).toBeNull();
+      } finally {
+        restore();
+      }
+    });
+
+    test("returns null on network error", async () => {
+      const restore = mockFetch(() =>
+        Promise.reject(new Error("Network error"))
+      );
+
+      try {
+        const url = await fileExists("test.jpg", testConfig);
+        expect(url).toBeNull();
+      } finally {
+        restore();
+      }
+    });
+  });
+
+  describe("uploadIfNotExists", () => {
+    test("returns existing URL without uploading (existed=true)", async () => {
+      let uploadCalled = false;
+
+      const restore = mockFetch((_url?: string, options?: any) => {
+        if (options?.method === "HEAD") {
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        uploadCalled = true;
+        return Promise.resolve(new Response("https://example.com/cdn/new.jpg"));
+      });
+
+      try {
+        const result = await uploadIfNotExists(
+          new Uint8Array([1, 2, 3]),
+          "existing.jpg",
+          "image/jpeg",
+          testConfig,
+          fastRetryConfig
+        );
+        expect(result.url).toBe("https://example.com/cdn/existing.jpg");
+        expect(result.existed).toBe(true);
+        expect(uploadCalled).toBe(false);
+      } finally {
+        restore();
+      }
+    });
+
+    test("uploads if file doesn't exist (existed=false)", async () => {
+      let uploadCalled = false;
+
+      const restore = mockFetch((_url?: string, options?: any) => {
+        if (options?.method === "HEAD") {
+          return Promise.resolve(new Response(null, { status: 404 }));
+        }
+        uploadCalled = true;
+        return Promise.resolve(new Response("https://example.com/cdn/new.jpg"));
+      });
+
+      try {
+        const result = await uploadIfNotExists(
+          new Uint8Array([1, 2, 3]),
+          "new.jpg",
+          "image/jpeg",
+          testConfig,
+          fastRetryConfig
+        );
+        expect(result.url).toBe("https://example.com/cdn/new.jpg");
+        expect(result.existed).toBe(false);
+        expect(uploadCalled).toBe(true);
       } finally {
         restore();
       }
@@ -171,7 +272,10 @@ describe("Upload Service", () => {
     test("uses custom retry config", async () => {
       let attempts = 0;
 
-      const restore = mockFetch(() => {
+      const restore = mockFetch((_url?: string, options?: any) => {
+        if (options?.method === "HEAD") {
+          return Promise.resolve(new Response(null, { status: 404 }));
+        }
         attempts++;
         return Promise.resolve(new Response("Server Error", { status: 500, statusText: "Internal Server Error" }));
       });
@@ -188,10 +292,18 @@ describe("Upload Service", () => {
       }
     });
 
-    test("uploadCover builds correct path", async () => {
-      const restore = mockFetch(() =>
-        Promise.resolve(new Response("https://example.com/cdn/tini-presence/test-machine-test1234/Music/My_Song-abc123.jpg"))
-      );
+    test("uploadCover checks existence first", async () => {
+      let headCalled = false;
+      let putCalled = false;
+
+      const restore = mockFetch((_url?: string, options?: any) => {
+        if (options?.method === "HEAD") {
+          headCalled = true;
+          return Promise.resolve(new Response(null, { status: 200 }));
+        }
+        putCalled = true;
+        return Promise.resolve(new Response("https://example.com/cdn/uploaded.jpg"));
+      });
 
       const service = new UploadService(testConfig, fastRetryConfig);
 
@@ -207,7 +319,47 @@ describe("Upload Service", () => {
           }
         );
 
+        expect(headCalled).toBe(true);
+        expect(putCalled).toBe(false); // File existed, no upload
+        expect(result.existed).toBe(true);
         expect(result.filename).toBe("tini-presence/test-machine-test1234/Music/My_Song-abc123.jpg");
+      } finally {
+        restore();
+      }
+    });
+
+    test("coverExists returns URL if exists", async () => {
+      const restore = mockFetch(() =>
+        Promise.resolve(new Response(null, { status: 200 }))
+      );
+
+      const service = new UploadService(testConfig);
+
+      try {
+        const url = await service.coverExists({
+          songTitle: "Test Song",
+          folderName: "Music",
+          hash: "xyz789",
+          extension: "jpg",
+        });
+
+        expect(url).toContain("tini-presence");
+        expect(url).toContain("Test_Song");
+      } finally {
+        restore();
+      }
+    });
+
+    test("exists method checks file existence", async () => {
+      const restore = mockFetch(() =>
+        Promise.resolve(new Response(null, { status: 200 }))
+      );
+
+      const service = new UploadService(testConfig);
+
+      try {
+        const url = await service.exists("some/path/file.jpg");
+        expect(url).toBe("https://example.com/cdn/some/path/file.jpg");
       } finally {
         restore();
       }
