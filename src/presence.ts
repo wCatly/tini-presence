@@ -92,6 +92,7 @@ export class PresenceService {
 
   /**
    * Build Discord activity from Spotify state
+   * Only shows presence for LOCAL files (not streaming tracks)
    * Uses ActivityType.Listening for Spotify-like display with progress bar
    */
   buildActivity(state: SpotifyState, coverUrl: string | null) {
@@ -100,6 +101,12 @@ export class PresenceService {
     }
 
     const { track, positionMs } = state;
+
+    // Only show presence for local files
+    if (track.source !== "local") {
+      return null;
+    }
+
     const now = Date.now();
 
     return {
@@ -111,8 +118,8 @@ export class PresenceService {
       endTimestamp: now + (track.durationMs - positionMs),
       largeImageKey: coverUrl || "spotify",
       largeImageText: track.album,
-      smallImageKey: track.source === "local" ? "local" : "spotify",
-      smallImageText: track.source === "local" ? "Local File" : "Spotify",
+      smallImageKey: "local",
+      smallImageText: "Local File",
       instance: false,
     };
   }
