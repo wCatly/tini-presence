@@ -8,12 +8,26 @@ import { existsSync, readFileSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
 import { createInterface } from "readline";
 
-const BUNDLE_DIR = join(
-  import.meta.dir,
-  "../src-tauri/target/release/bundle/macos"
-);
-const DMG_DIR = join(import.meta.dir, "../src-tauri/target/release/bundle/dmg");
-const OUTPUT_DIR = join(import.meta.dir, "../src-tauri/target/release/bundle");
+const TARGET_BASE = join(import.meta.dir, "../src-tauri/target");
+
+// Try to find universal build first, then fallback to default
+const BUNDLE_DIR = existsSync(
+  join(TARGET_BASE, "universal-apple-darwin/release/bundle/macos")
+)
+  ? join(TARGET_BASE, "universal-apple-darwin/release/bundle/macos")
+  : join(TARGET_BASE, "release/bundle/macos");
+
+const DMG_DIR = existsSync(
+  join(TARGET_BASE, "universal-apple-darwin/release/bundle/dmg")
+)
+  ? join(TARGET_BASE, "universal-apple-darwin/release/bundle/dmg")
+  : join(TARGET_BASE, "release/bundle/dmg");
+
+const OUTPUT_DIR = existsSync(
+  join(TARGET_BASE, "universal-apple-darwin/release/bundle")
+)
+  ? join(TARGET_BASE, "universal-apple-darwin/release/bundle")
+  : join(TARGET_BASE, "release/bundle");
 const TAURI_CONF = join(import.meta.dir, "../src-tauri/tauri.conf.json");
 
 const COPYPARTY_API_KEY = process.env.COPYPARTY_API_KEY;
@@ -71,10 +85,11 @@ function findBundleFiles(): { bundle: string; signature: string } | null {
   };
 }
 
-function findDmgFile(): string | null {
+function findDmgFile(version: string): string | null {
   if (!existsSync(DMG_DIR)) return null;
   const files = readdirSync(DMG_DIR);
-  return files.find((f) => f.endsWith(".dmg")) || null;
+  // Find DMG that matches current version
+  return files.find((f) => f.endsWith(".dmg") && f.includes(version)) || null;
 }
 
 async function uploadFileToCdn(
@@ -216,7 +231,7 @@ async function main() {
   console.log(`   1. ${join(BUNDLE_DIR, files.bundle)}`);
   console.log(`   2. ${outputPath}`);
 
-  const dmg = findDmgFile();
+  const dmg = findDmgFile(version);
   if (dmg) {
     console.log(`\n💾 Installer (DMG):`);
     console.log(`   ${join(DMG_DIR, dmg)}`);
