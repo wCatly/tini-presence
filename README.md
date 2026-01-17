@@ -7,6 +7,7 @@ A macOS app that displays your Spotify playback as Discord Rich Presence, with s
 - Shows current Spotify track in Discord Rich Presence
 - Works with both streaming and local files
 - Extracts and uploads cover art from local MP3s
+- Organized uploads by device and folder (no conflicts when sharing server)
 - Uses Copyparty for cover art hosting
 - Native macOS Finder picker for adding music folders
 
@@ -16,7 +17,7 @@ A macOS app that displays your Spotify playback as Discord Rich Presence, with s
 - [Bun](https://bun.sh) runtime
 - Spotify desktop app
 - Discord desktop app
-- Copyparty server for cover art uploads (or use the default)
+- Copyparty server for cover art uploads (optional)
 
 ## Setup
 
@@ -50,7 +51,7 @@ bun run dev
 
 The app will:
 1. Connect to Discord RPC
-2. Poll Spotify every 5 seconds
+2. Poll Spotify every second
 3. Update your Discord presence with the current track
 4. For local files: extract cover art, upload it, and display in Discord
 
@@ -68,10 +69,14 @@ This opens a native macOS Finder picker. Select your music folder and it will be
 
 ```
 src/
+├── identity.ts     # Device identity (machine name + unique ID)
 ├── spotify.ts      # Spotify client (AppleScript integration)
 ├── cover.ts        # Cover art extraction from audio files
 ├── upload.ts       # Copyparty upload service
-└── local-files.ts  # Local file finder and config management
+├── local-files.ts  # Local file finder and config management
+└── presence.ts     # Presence service (orchestrates the flow)
+
+index.ts            # Main entry point (Discord RPC + Spotify polling)
 
 tests/
 ├── unit/           # Unit tests for each service
@@ -82,15 +87,36 @@ test-music/         # Test MP3 files with embedded cover art
 
 ## How It Works
 
-1. **Spotify Client** (`src/spotify.ts`): Uses AppleScript to query Spotify's current track, including detecting if it's a local file (track ID starts with `spotify:local:`).
+1. **Identity** (`src/identity.ts`): Generates a unique device identity (machine name + ID) stored in `~/.config/tini-presence/identity.json`. This prevents conflicts when multiple users share the same Copyparty server.
 
-2. **Cover Extraction** (`src/cover.ts`): Uses `music-metadata` to extract embedded album art from MP3 files. Generates a hash-based filename for deduplication.
+2. **Spotify Client** (`src/spotify.ts`): Uses AppleScript to query Spotify's current track, including detecting if it's a local file (track ID starts with `spotify:local:`).
 
-3. **Upload Service** (`src/upload.ts`): Uploads cover art to Copyparty API with in-memory caching to avoid duplicate uploads.
+3. **Cover Extraction** (`src/cover.ts`): Uses `music-metadata` to extract embedded album art from audio files.
 
-4. **Local File Finder** (`src/local-files.ts`): Searches configured folders for matching audio files using artist and title from Spotify.
+4. **Upload Service** (`src/upload.ts`): Uploads cover art to Copyparty with retry logic and caching.
 
-5. **Main Loop** (`index.ts`): Orchestrates everything - polls Spotify, handles local file cover art, and updates Discord presence.
+5. **Local File Finder** (`src/local-files.ts`): Searches configured folders for matching audio files.
+
+6. **Presence Service** (`src/presence.ts`): Orchestrates the full flow - find file, extract cover, upload, build Discord activity.
+
+### Upload Path Structure
+
+Cover art is uploaded with an organized path:
+
+```
+tini-presence/{machine-name}-{id}/{folder}/{song-title}-{hash}.jpg
+```
+
+Example:
+```
+tini-presence/MacBook-Pro-a1b2c3d4/Music/My_Song-fb715b3f.jpg
+```
+
+This ensures:
+- Each device has its own folder
+- Files are organized by source folder
+- Song titles are readable
+- Hash prevents duplicates
 
 ## Running Tests
 
@@ -104,6 +130,13 @@ bun test:unit
 # Integration tests (requires Discord and network)
 bun test:integration
 ```
+
+## Configuration Files
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `config.json` | `~/.config/tini-presence/` | Music folder paths |
+| `identity.json` | `~/.config/tini-presence/` | Device identity |
 
 ## Environment Variables
 
