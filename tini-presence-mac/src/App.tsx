@@ -16,6 +16,8 @@ import {
   X,
   ChevronDown,
   ScrollText,
+  Loader2,
+  History,
 } from "lucide-react";
 import "@/index.css";
 
@@ -163,9 +165,16 @@ function App() {
               )}
             </div>
             <div className="flex flex-col">
-              <h1 className="text-sm font-semibold text-foreground tracking-tight leading-tight">
-                tini-presence
-              </h1>
+              <div className="flex items-center gap-2">
+                <h1 className="text-sm font-semibold text-foreground tracking-tight leading-tight">
+                  tini-presence
+                </h1>
+                {import.meta.env.DEV && (
+                  <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30 uppercase tracking-widest">
+                    Dev
+                  </span>
+                )}
+              </div>
               {showSettings ? (
                 <span className="text-[10px] font-medium text-muted-foreground">
                   Settings
@@ -362,6 +371,57 @@ function MainView({
   );
 }
 
+interface Manifest {
+  version: string;
+  notes: string;
+  pub_date: string;
+}
+
+function ChangelogSection() {
+  const [manifest, setManifest] = useState<Manifest | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch("https://pifiles.florian.lt/cdn/tini-presence/releases/latest.json")
+      .then((res) => res.json())
+      .then((data) => {
+        setManifest(data);
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, []);
+
+  if (loading)
+    return (
+      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/50 italic animate-pulse">
+        <Loader2 className="w-3 h-3 animate-spin" />
+        Checking for updates...
+      </div>
+    );
+
+  if (!manifest) return null;
+
+  return (
+    <div className="space-y-2 pt-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-semibold text-foreground/80 uppercase tracking-wider">
+          Latest Release: v{manifest.version}
+        </span>
+        <span className="text-[10px] text-muted-foreground/60 italic">
+          {new Date(manifest.pub_date).toLocaleDateString(undefined, {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          })}
+        </span>
+      </div>
+      <div className="text-[10px] leading-relaxed text-muted-foreground bg-muted/20 rounded-lg p-2.5 border border-border/40 font-mono whitespace-pre-wrap">
+        {manifest.notes}
+      </div>
+    </div>
+  );
+}
+
 function SettingsView({
   config,
   setConfig,
@@ -378,6 +438,11 @@ function SettingsView({
   logs: { id: number; text: string }[];
 }) {
   const [logsExpanded, setLogsExpanded] = useState(false);
+  const [appVersion, setAppVersion] = useState("");
+
+  useEffect(() => {
+    getVersion().then(setAppVersion);
+  }, []);
 
   return (
     <div className="flex flex-col animate-slide-up">
@@ -539,6 +604,18 @@ function SettingsView({
               Open config
             </Button>
           </div>
+        </div>
+
+        {/* Changelog Section */}
+        <div className="space-y-3 pt-2 border-t border-border/30">
+          <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+            <div className="flex items-center gap-1.5 font-medium">
+              <History className="w-3.5 h-3.5" />
+              <span>Version History</span>
+            </div>
+            <span>Current: v{appVersion}</span>
+          </div>
+          <ChangelogSection />
         </div>
 
         {/* Collapsible Logs */}

@@ -16,6 +16,9 @@ const DMG_DIR = join(import.meta.dir, "../src-tauri/target/release/bundle/dmg");
 const OUTPUT_DIR = join(import.meta.dir, "../src-tauri/target/release/bundle");
 const TAURI_CONF = join(import.meta.dir, "../src-tauri/tauri.conf.json");
 
+const COPYPARTY_API_KEY = process.env.COPYPARTY_API_KEY;
+const CDN_URL = "https://pifiles.florian.lt";
+
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({
     input: process.stdin,
@@ -72,6 +75,38 @@ function findDmgFile(): string | null {
   if (!existsSync(DMG_DIR)) return null;
   const files = readdirSync(DMG_DIR);
   return files.find((f) => f.endsWith(".dmg")) || null;
+}
+
+async function uploadFileToCdn(
+  filePath: string,
+  targetPath: string,
+  mimeType: string
+) {
+  if (!COPYPARTY_API_KEY) {
+    throw new Error("COPYPARTY_API_KEY not found in environment");
+  }
+
+  const fileData = readFileSync(filePath);
+  const auth = Buffer.from(`cdn-api:${COPYPARTY_API_KEY}`).toString("base64");
+  const uploadUrl = `${CDN_URL}/cdn/${targetPath}?want=url`;
+
+  console.log(`   ⬆️  Uploading ${targetPath}...`);
+  const res = await fetch(uploadUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": mimeType,
+    },
+    body: fileData,
+  });
+
+  if (!res.ok) {
+    throw new Error(`Upload failed: ${res.status} ${res.statusText}`);
+  }
+
+  const finalUrl = (await res.text()).trim();
+  console.log(`   ✅ Success: ${finalUrl}`);
+  return finalUrl;
 }
 
 async function main() {
@@ -185,6 +220,44 @@ async function main() {
   if (dmg) {
     console.log(`\n💾 Installer (DMG):`);
     console.log(`   ${join(DMG_DIR, dmg)}`);
+  }
+
+  const shouldUpload = await confirm("\n🚀 Upload files to CDN?");
+  if (shouldUpload) {
+    try {
+      console.log("\n🛰️  Starting upload...");
+
+      // 1. Upload .tar.gz
+      const tarGzPath = join(BUNDLE_DIR, files.bundle);
+      await uploadFileToCdn(
+        tarGzPath,
+        `tini-presence/releases/${files.bundle}`,
+        "application/gzip"
+      );
+
+      // 2. Upload latest.json
+      await uploadFileToCdn(
+        outputPath,
+        "tini-presence/releases/latest.json",
+        "application/json"
+      );
+
+      // 3. Optional: Upload DMG
+      if (dmg) {
+        const dmgPath = join(DMG_DIR, dmg);
+        await uploadFileToCdn(
+          dmgPath,
+          `tini-presence/releases/${dmg}`,
+          "application/octet-stream"
+        );
+      }
+
+      console.log("\n✨ All files uploaded successfully!");
+    } catch (err) {
+      console.error(
+        `\n❌ Upload failed: ${err instanceof Error ? err.message : err}`
+      );
+    }
   }
 
   console.log("\n🎉 Done!\n");

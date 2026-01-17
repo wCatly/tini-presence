@@ -41,6 +41,23 @@ async function build() {
     );
   }
 
+  // Create universal binary using lipo (required for Tauri's universal target)
+  const aarch64Binary = join(
+    BINARIES_DIR,
+    "tini-presence-core-aarch64-apple-darwin"
+  );
+  const x86_64Binary = join(
+    BINARIES_DIR,
+    "tini-presence-core-x86_64-apple-darwin"
+  );
+  const universalBinary = join(
+    BINARIES_DIR,
+    "tini-presence-core-universal-apple-darwin"
+  );
+
+  console.log("  - Creating universal FAT binary...");
+  await $`lipo -create -output ${universalBinary} ${aarch64Binary} ${x86_64Binary}`;
+
   // Create dev-friendly binary for current arch session
   const currentTriple = getTargetTriple();
   const currentBinary = join(
@@ -58,7 +75,9 @@ async function build() {
     // Ignore cleanup errors
   }
 
-  console.log(`Done! Binaries built for both architectures in ${BINARIES_DIR}`);
+  console.log(
+    `Done! Binaries built for both architectures and universal in ${BINARIES_DIR}`
+  );
 }
 
 build().catch((err) => {

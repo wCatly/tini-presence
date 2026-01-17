@@ -27,3 +27,4 @@ Thumbs.db
 # Note: The app creates ~/.config/tini-presence/config.json for local file folders
 tini-presence-mac/src-tauri/binaries/tini-presence-core-aarch64-apple-darwin
 tini-presence-mac/src-tauri/binaries/tini-presence-core-x86_64-apple-darwin
+tini-presence-mac/src-tauri/binaries/tini-presence-core-universal-apple-darwin

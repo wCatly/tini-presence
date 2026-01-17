@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex};
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{TrayIconBuilder, TrayIconEvent},
-    Emitter, Manager, PhysicalPosition, RunEvent,
+    Emitter, Manager, PhysicalPosition,
 };
 use tauri_plugin_shell::{process::CommandChild, ShellExt};
 
@@ -258,6 +258,8 @@ fn open_config(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> bool {
 fn quit_app(app: tauri::AppHandle, state: tauri::State<'_, Arc<Mutex<AppState>>>) {
     stop_sidecar(&app, &state);
     app.exit(0);
+    // Fallback force exit
+    std::process::exit(0);
 }
 
 const MENU_BAR_MAX_Y: f64 = 120.0;
@@ -381,9 +383,5 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, event| {
-            if let RunEvent::ExitRequested { api, .. } = event {
-                api.prevent_exit();
-            }
-        });
+        .run(|_app, _event| {});
 }
