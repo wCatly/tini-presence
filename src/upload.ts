@@ -70,14 +70,8 @@ export async function uploadFile(
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
 ): Promise<UploadResult> {
   const uploadPath = config.uploadPath || "/cdn";
-  const uploadUrl = `${config.baseUrl}${uploadPath}/?want=url`;
-
-  const formData = new FormData();
-  formData.append(
-    "f",
-    new Blob([data.buffer as ArrayBuffer], { type: mimeType }),
-    filename
-  );
+  // Use PUT with filename in path to preserve our hash-based filename
+  const uploadUrl = `${config.baseUrl}${uploadPath}/${filename}?want=url`;
 
   const auth = Buffer.from(
     `${config.username || "cdn-api"}:${config.apiKey}`
@@ -88,11 +82,12 @@ export async function uploadFile(
   for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
     try {
       const res = await fetch(uploadUrl, {
-        method: "POST",
+        method: "PUT",
         headers: {
           Authorization: `Basic ${auth}`,
+          "Content-Type": mimeType,
         },
-        body: formData,
+        body: new Blob([data.buffer as ArrayBuffer], { type: mimeType }),
       });
 
       if (res.ok) {
