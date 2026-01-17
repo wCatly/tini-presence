@@ -1,0 +1,14 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.0.0/schema.json",
+  "files": {
+    "includes": ["**/*.ts", "**/*.tsx", "**/*.js", "**/*.jsx"]
+  },
+  "css": {
+    "formatter": {
+      "enabled": false
+    },
+    "linter": {
+      "enabled": false
+    }
+  }
+}

@@ -36,6 +36,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -51,5 +52,13 @@
       "binaries/tini-presence-core"
     ],
     "category": "public.app-category.utilities"
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ0ODAxNjIyNTMyNjhFRTYKUldUbWppWlRJaGFBMUc3R21MT3AyYURYeGtlUGVRM0pPTlpMWG9ZUEdZV3hJL1hWeGUyV1VWc2cK",
+      "endpoints": [
+        "https://pifiles.florian.lt/cdn/tini-presence/releases/latest.json"
+      ]
+    }
   }
 }

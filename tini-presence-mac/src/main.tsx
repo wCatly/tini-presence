@@ -1,5 +1,10 @@
 import ReactDOM from "react-dom/client";
-import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
+import {
+  Menu,
+  MenuItem,
+  PredefinedMenuItem,
+  Submenu,
+} from "@tauri-apps/api/menu";
 import { invoke } from "@tauri-apps/api/core";
 import App from "./App";
 
@@ -11,7 +16,9 @@ async function setupMenu() {
         id: "about",
         text: "About tini-presence",
         action: () => {
-          window.alert("tini-presence\n\nDiscord Rich Presence for Spotify local files.");
+          window.alert(
+            "tini-presence\n\nDiscord Rich Presence for Spotify local files."
+          );
         },
       }),
       await PredefinedMenuItem.new({ text: "separator", item: "Separator" }),

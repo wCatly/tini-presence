@@ -14,7 +14,7 @@ import {
 
 const TEST_MUSIC_DIR = resolve(import.meta.dir, "../../test-music");
 const TEST_CONFIG_DIR = "/tmp/tini-presence-test";
-const TEST_CONFIG_PATH = `${TEST_CONFIG_DIR}/config.json`;
+const TEST_CONFIG_PATH = `${TEST_CONFIG_DIR}/.config/tini-presence/config.json`;
 
 describe("Local Files", () => {
   describe("parseLocalTrackInfo", () => {
@@ -62,7 +62,8 @@ describe("Local Files", () => {
     });
 
     test("handles special characters", () => {
-      const trackId = "spotify:local:Artist%20Name:Album%20Name:Song%20Title:120";
+      const trackId =
+        "spotify:local:Artist%20Name:Album%20Name:Song%20Title:120";
       const info = parseLocalTrackInfo(trackId);
 
       expect(info?.artist).toBe("Artist Name");
@@ -222,7 +223,9 @@ describe("Local Files", () => {
     });
 
     test("findFileFromSpotifyDb returns null for non-existent title", () => {
-      const result = findFileFromSpotifyDb("this_file_definitely_does_not_exist_12345");
+      const result = findFileFromSpotifyDb(
+        "this_file_definitely_does_not_exist_12345"
+      );
       expect(result).toBeNull();
     });
 
