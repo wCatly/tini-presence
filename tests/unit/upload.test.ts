@@ -1,14 +1,11 @@
-import { describe, expect, test, beforeEach, beforeAll, afterAll } from "bun:test";
+import { describe, expect, test, beforeAll, afterAll } from "bun:test";
 import {
   uploadFile,
-  uploadWithCache,
-  clearCache,
-  getCacheSize,
   UploadService,
   UploadError,
   buildCoverPath,
 } from "../../src/upload.ts";
-import { setTestIdentity, resetIdentity, TEST_IDENTITY, getDeviceFolder } from "../../src/identity.ts";
+import { setTestIdentity, resetIdentity, TEST_IDENTITY } from "../../src/identity.ts";
 import type { UploadConfig, RetryConfig } from "../../src/upload.ts";
 
 const testConfig: UploadConfig = {
@@ -19,12 +16,12 @@ const testConfig: UploadConfig = {
 
 const fastRetryConfig: RetryConfig = {
   maxRetries: 2,
-  baseDelay: 10, // Fast for testing
+  baseDelay: 10,
   maxDelay: 100,
 };
 
 // Helper to mock fetch
-function mockFetch(impl: () => Promise<Response>): () => void {
+function mockFetch(impl: (url?: string, options?: any) => Promise<Response>): () => void {
   const originalFetch = globalThis.fetch;
   (globalThis as any).fetch = impl;
   return () => {
@@ -33,17 +30,12 @@ function mockFetch(impl: () => Promise<Response>): () => void {
 }
 
 describe("Upload Service", () => {
-  // Use test identity for all upload tests
   beforeAll(() => {
     setTestIdentity(TEST_IDENTITY);
   });
 
   afterAll(() => {
     resetIdentity();
-  });
-
-  beforeEach(() => {
-    clearCache();
   });
 
   describe("UploadError", () => {
@@ -175,63 +167,6 @@ describe("Upload Service", () => {
     });
   });
 
-  describe("uploadWithCache", () => {
-    test("caches successful uploads", async () => {
-      let fetchCalls = 0;
-
-      const restore = mockFetch(() => {
-        fetchCalls++;
-        return Promise.resolve(new Response("https://example.com/cdn/cached.jpg"));
-      });
-
-      try {
-        const data = new Uint8Array([1, 2, 3]);
-        const result1 = await uploadWithCache(data, "test.jpg", "image/jpeg", testConfig, "cache-key", fastRetryConfig);
-        const result2 = await uploadWithCache(data, "test.jpg", "image/jpeg", testConfig, "cache-key", fastRetryConfig);
-
-        expect(result1.url).toBe(result2.url);
-        expect(fetchCalls).toBe(1); // Only one fetch, second was cached
-        expect(getCacheSize()).toBe(1);
-      } finally {
-        restore();
-      }
-    });
-
-    test("uses filename as cache key if not provided", async () => {
-      const restore = mockFetch(() =>
-        Promise.resolve(new Response("https://example.com/cdn/file.jpg"))
-      );
-
-      try {
-        await uploadWithCache(new Uint8Array([1]), "unique-file.jpg", "image/jpeg", testConfig, undefined, fastRetryConfig);
-        await uploadWithCache(new Uint8Array([1]), "unique-file.jpg", "image/jpeg", testConfig, undefined, fastRetryConfig);
-
-        expect(getCacheSize()).toBe(1);
-      } finally {
-        restore();
-      }
-    });
-  });
-
-  describe("cache functions", () => {
-    test("clearCache empties the cache", async () => {
-      const restore = mockFetch(() =>
-        Promise.resolve(new Response("https://example.com/cdn/test.jpg"))
-      );
-
-      try {
-        await uploadWithCache(new Uint8Array([1]), "a.jpg", "image/jpeg", testConfig, "a", fastRetryConfig);
-        await uploadWithCache(new Uint8Array([2]), "b.jpg", "image/jpeg", testConfig, "b", fastRetryConfig);
-
-        expect(getCacheSize()).toBe(2);
-        clearCache();
-        expect(getCacheSize()).toBe(0);
-      } finally {
-        restore();
-      }
-    });
-  });
-
   describe("UploadService class", () => {
     test("uses custom retry config", async () => {
       let attempts = 0;
@@ -253,41 +188,14 @@ describe("Upload Service", () => {
       }
     });
 
-    test("uploadCached uses cache", async () => {
-      let fetchCalls = 0;
-
-      const restore = mockFetch(() => {
-        fetchCalls++;
-        return Promise.resolve(new Response("https://example.com/cdn/service.jpg"));
-      });
-
-      const service = new UploadService(testConfig, fastRetryConfig);
-
-      try {
-        clearCache();
-        const data = new Uint8Array([1, 2, 3]);
-        await service.uploadCached(data, "test.jpg", "image/jpeg", "service-key");
-        await service.uploadCached(data, "test.jpg", "image/jpeg", "service-key");
-
-        expect(fetchCalls).toBe(1);
-        expect(service.cacheSize).toBe(1);
-
-        service.clearCache();
-        expect(service.cacheSize).toBe(0);
-      } finally {
-        restore();
-      }
-    });
-
     test("uploadCover builds correct path", async () => {
       const restore = mockFetch(() =>
-        Promise.resolve(new Response("https://example.com/cdn/uploaded.jpg"))
+        Promise.resolve(new Response("https://example.com/cdn/tini-presence/test-machine-test1234/Music/My_Song-abc123.jpg"))
       );
 
       const service = new UploadService(testConfig, fastRetryConfig);
 
       try {
-        clearCache();
         const result = await service.uploadCover(
           new Uint8Array([1, 2, 3]),
           "image/jpeg",
@@ -299,12 +207,7 @@ describe("Upload Service", () => {
           }
         );
 
-        // Should contain device folder, folder, song title, and hash
-        expect(result.filename).toContain("tini-presence");
-        expect(result.filename).toContain("test-machine-test1234"); // Test identity
-        expect(result.filename).toContain("Music");
-        expect(result.filename).toContain("My_Song");
-        expect(result.filename).toContain("abc123");
+        expect(result.filename).toBe("tini-presence/test-machine-test1234/Music/My_Song-abc123.jpg");
       } finally {
         restore();
       }
@@ -320,7 +223,6 @@ describe("Upload Service", () => {
         extension: "jpg",
       });
 
-      // Uses test identity: test-machine-test1234
       expect(path).toBe("tini-presence/test-machine-test1234/My_Music/Test_Song-abcd1234.jpg");
     });
 

@@ -5,7 +5,7 @@ import { Client } from "@xhayper/discord-rpc";
 import { extractCoverArt, getExtension, getFolderName } from "../../src/cover.ts";
 import { spotify } from "../../src/spotify.ts";
 import { UploadService } from "../../src/upload.ts";
-import { setTestIdentity, resetIdentity, TEST_IDENTITY, getDeviceFolder } from "../../src/identity.ts";
+import { getDeviceFolder } from "../../src/identity.ts";
 
 const TEST_MUSIC_DIR = resolve(import.meta.dir, "../../test-music");
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID || "YOUR_CLIENT_ID";
@@ -145,10 +145,10 @@ describe("Integration Tests", () => {
     );
 
     test(
-      "caches uploaded files by hash",
+      "returns same URL for same file (Copyparty deduplication)",
       async () => {
         if (!COPYPARTY_API_KEY) {
-          console.log("COPYPARTY_API_KEY not set, skipping cache test");
+          console.log("COPYPARTY_API_KEY not set, skipping test");
           return;
         }
 
@@ -163,32 +163,28 @@ describe("Integration Tests", () => {
         expect(cover).not.toBeNull();
 
         if (cover) {
-          uploadService.clearCache();
+          const options = {
+            songTitle: "Test Song One",
+            folderName: getFolderName(filePath),
+            hash: cover.hash,
+            extension: getExtension(cover.mimeType),
+          };
 
           // First upload
           const result1 = await uploadService.uploadCover(
             cover.data,
             cover.mimeType,
-            {
-              songTitle: "Test Song One",
-              folderName: getFolderName(filePath),
-              hash: cover.hash,
-              extension: getExtension(cover.mimeType),
-            }
+            options
           );
 
-          // Second upload should return same URL (cached by hash)
+          // Second upload - Copyparty returns same URL (deduplication)
           const result2 = await uploadService.uploadCover(
             cover.data,
             cover.mimeType,
-            {
-              songTitle: "Test Song One",
-              folderName: getFolderName(filePath),
-              hash: cover.hash,
-              extension: getExtension(cover.mimeType),
-            }
+            options
           );
 
+          // Both should return the same URL
           expect(result1.url).toBe(result2.url);
         }
       },

@@ -62,9 +62,6 @@ export function buildCoverPath(options: CoverUploadOptions): string {
   return `tini-presence/${deviceFolder}/${folder}/${filename}`;
 }
 
-// In-memory cache
-const uploadCache = new Map<string, string>();
-
 function isRetryableError(error: unknown): boolean {
   if (error instanceof UploadError) {
     return error.retryable;
@@ -89,32 +86,18 @@ function getRetryDelay(attempt: number, config: RetryConfig): number {
   return Math.min(exponentialDelay + jitter, config.maxDelay);
 }
 
-// Create folder on Copyparty (will be auto-created on upload, but explicit is cleaner)
-export async function createFolder(
-  folderPath: string,
-  config: UploadConfig
-): Promise<boolean> {
-  const uploadPath = config.uploadPath || "/cdn";
-  const url = `${config.baseUrl}${uploadPath}/${folderPath}?mkdir`;
-  
-  const auth = Buffer.from(
-    `${config.username || "cdn-api"}:${config.apiKey}`
-  ).toString("base64");
-
-  try {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Basic ${auth}` },
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
+/**
+ * Upload file to CDN using PUT
+ * 
+ * With Copyparty's u2ow setting, uploading the same filename will:
+ * - Overwrite if content is different
+ * - Return existing URL if content is the same (deduplication)
+ * 
+ * This means we don't need to check if file exists first - just upload!
+ */
 export async function uploadFile(
   data: Uint8Array,
-  filePath: string,  // Full path including subfolders
+  filePath: string,
   mimeType: string,
   config: UploadConfig,
   retryConfig: RetryConfig = DEFAULT_RETRY_CONFIG
@@ -177,35 +160,6 @@ export async function uploadFile(
   throw lastError || new UploadError("Upload failed after retries", undefined, false);
 }
 
-export async function uploadWithCache(
-  data: Uint8Array,
-  filePath: string,
-  mimeType: string,
-  config: UploadConfig,
-  cacheKey?: string,
-  retryConfig?: RetryConfig
-): Promise<UploadResult> {
-  const key = cacheKey || filePath;
-  const cached = uploadCache.get(key);
-
-  if (cached) {
-    return { url: cached, filename: filePath };
-  }
-
-  const result = await uploadFile(data, filePath, mimeType, config, retryConfig);
-  uploadCache.set(key, result.url);
-
-  return result;
-}
-
-export function clearCache(): void {
-  uploadCache.clear();
-}
-
-export function getCacheSize(): number {
-  return uploadCache.size;
-}
-
 export class UploadService {
   private config: UploadConfig;
   private retryConfig: RetryConfig;
@@ -223,34 +177,18 @@ export class UploadService {
     return uploadFile(data, filePath, mimeType, this.config, this.retryConfig);
   }
 
-  async uploadCached(
-    data: Uint8Array,
-    filePath: string,
-    mimeType: string,
-    cacheKey?: string
-  ): Promise<UploadResult> {
-    return uploadWithCache(data, filePath, mimeType, this.config, cacheKey, this.retryConfig);
-  }
-
-  // Upload cover art with organized path structure
+  /**
+   * Upload cover art with organized path structure
+   * 
+   * Copyparty handles deduplication - same file = same URL returned
+   * No need to check if file exists first!
+   */
   async uploadCover(
     data: Uint8Array,
     mimeType: string,
     options: CoverUploadOptions
   ): Promise<UploadResult> {
     const filePath = buildCoverPath(options);
-    return this.uploadCached(data, filePath, mimeType, options.hash);
-  }
-
-  async createFolder(folderPath: string): Promise<boolean> {
-    return createFolder(folderPath, this.config);
-  }
-
-  clearCache(): void {
-    clearCache();
-  }
-
-  get cacheSize(): number {
-    return getCacheSize();
+    return this.upload(data, filePath, mimeType);
   }
 }
