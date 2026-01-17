@@ -8,6 +8,7 @@
  * 4. Return URL for Discord
  */
 
+import { ActivityType } from "discord-api-types/v10";
 import { extractCoverArt, getExtension, getFolderName } from "./cover.ts";
 import { localFiles } from "./local-files.ts";
 import { UploadService, type UploadConfig } from "./upload.ts";
@@ -91,6 +92,7 @@ export class PresenceService {
 
   /**
    * Build Discord activity from Spotify state
+   * Uses ActivityType.Listening for Spotify-like display with progress bar
    */
   buildActivity(state: SpotifyState, coverUrl: string | null) {
     if (!state.isRunning || state.state !== "playing") {
@@ -101,8 +103,10 @@ export class PresenceService {
     const now = Date.now();
 
     return {
+      type: ActivityType.Listening,
+      name: "Spotify",
       details: track.title,
-      state: `by ${track.artist}`,
+      state: track.artist,
       startTimestamp: now - positionMs,
       endTimestamp: now + (track.durationMs - positionMs),
       largeImageKey: coverUrl || "spotify",
