@@ -64,7 +64,7 @@ export class PresenceService {
       return null;
     }
 
-    // Upload with organized path
+    // Upload with organized path (skips if already exists)
     try {
       const result = await this.uploadService.uploadCover(
         cover.data,
@@ -77,7 +77,11 @@ export class PresenceService {
         }
       );
       
-      console.log(`[presence] Cover uploaded: ${result.url}`);
+      if (result.existed) {
+        console.log(`[presence] Cover exists: ${result.url}`);
+      } else {
+        console.log(`[presence] Cover uploaded: ${result.url}`);
+      }
       return result.url;
     } catch (err) {
       console.error(`[presence] Upload failed:`, err);
