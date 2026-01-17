@@ -74,4 +74,11 @@ rpc.on("ready", () => {
   }, 1000);
 });
 
-rpc.login().catch(console.error);
+rpc.login().catch((err) => {
+  if (err.code === 1 || err.message?.includes("timed out")) {
+    console.error("Failed to connect to Discord. Make sure Discord is running.");
+  } else {
+    console.error("Discord RPC error:", err);
+  }
+  process.exit(1);
+});
