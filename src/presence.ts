@@ -27,10 +27,26 @@ export class PresenceService {
   private uploadService: UploadService | null = null;
   // Cache cover URLs by track ID to avoid repeated HEAD requests
   private coverUrlCache: Map<string, string | null> = new Map();
+  private unsubscribe: (() => void) | null = null;
 
   constructor(config: PresenceConfig) {
     if (config.upload) {
       this.uploadService = new UploadService(config.upload);
+    }
+
+    // Subscribe to music folder changes to clear cache
+    this.unsubscribe = localFiles.onChange(() => {
+      this.coverUrlCache.clear();
+    });
+  }
+
+  /**
+   * Clean up resources
+   */
+  destroy() {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
     }
   }
 
@@ -57,7 +73,11 @@ export class PresenceService {
 
     // Check cache first
     if (this.coverUrlCache.has(track.id)) {
-      return this.coverUrlCache.get(track.id) ?? null;
+      const cached = this.coverUrlCache.get(track.id);
+      console.log(
+        `[presence] Cache hit for ${track.title}: ${cached ? "found" : "none"}`,
+      );
+      return cached ?? null;
     }
 
     // Find the local file
@@ -69,12 +89,16 @@ export class PresenceService {
     }
 
     // Extract cover art
+    console.log(`[presence] Found file: ${filePath}. Extracting artwork...`);
     const cover = await extractCoverArt(filePath);
     if (!cover) {
-      console.log(`[presence] No cover art: ${track.title}`);
+      console.log(`[presence] No cover art found inside file: ${track.title}`);
       this.coverUrlCache.set(track.id, null);
       return null;
     }
+    console.log(
+      `[presence] Artwork extracted: ${cover.mimeType}, ${Math.round(cover.data.length / 1024)}KB`,
+    );
 
     // Upload with organized path (skips if already exists)
     try {
@@ -86,7 +110,7 @@ export class PresenceService {
           folderName: getFolderName(filePath),
           hash: cover.hash,
           extension: getExtension(cover.mimeType),
-        }
+        },
       );
 
       if (result.existed) {
@@ -153,7 +177,7 @@ export class PresenceService {
  * Create presence service from environment variables
  */
 export function createPresenceService(
-  configOverride?: AppConfig
+  configOverride?: AppConfig,
 ): PresenceService {
   const fileConfig = configOverride ?? getConfig();
   const apiKey = fileConfig.copypartyApiKey || process.env.COPYPARTY_API_KEY;

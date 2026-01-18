@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { Button } from "@/components/ui/button";
@@ -38,7 +38,20 @@ export function UpdateBanner() {
     error: null,
   });
 
+  const statusRef = useRef(state.status);
+  useEffect(() => {
+    statusRef.current = state.status;
+  }, [state.status]);
+
   const checkForUpdates = useCallback(async (silent = false) => {
+    // Prevent check if we are already busy
+    if (
+      statusRef.current === "downloading" ||
+      statusRef.current === "installing"
+    ) {
+      return;
+    }
+
     if (!silent) {
       setState((prev) => ({ ...prev, status: "checking", error: null }));
     }
@@ -124,9 +137,12 @@ export function UpdateBanner() {
     checkForUpdates();
 
     // Background check every hour
-    const interval = setInterval(() => {
-      checkForUpdates(true);
-    }, 1000 * 60 * 60);
+    const interval = setInterval(
+      () => {
+        checkForUpdates(true);
+      },
+      1000 * 60 * 60,
+    );
 
     // Check when window is focused
     const handleFocus = () => checkForUpdates(true);

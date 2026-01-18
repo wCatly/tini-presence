@@ -22,6 +22,7 @@ const rpc = new Client({ clientId });
 let presence = createPresenceService(config);
 
 function refreshPresence(nextConfig: AppConfig) {
+  if (presence) presence.destroy();
   presence = createPresenceService(nextConfig);
   if (nextConfig.discordClientId && nextConfig.discordClientId !== clientId) {
     clientId = nextConfig.discordClientId;
@@ -192,29 +193,52 @@ async function updatePresence(state: SpotifyState) {
   }
 }
 
+// Discord connection state
+let isConnected = false;
+let reconnectTimeout: Timer | null = null;
+
+async function connectToDiscord() {
+  if (reconnectTimeout) {
+    clearTimeout(reconnectTimeout);
+    reconnectTimeout = null;
+  }
+
+  try {
+    console.log("[sidecar] Connecting to Discord...");
+    await rpc.login();
+  } catch (err: unknown) {
+    console.error(
+      "[sidecar] Failed to connect to Discord, retrying in 5s...",
+      err,
+    );
+    emitStatus({ playing: false, reason: "discord-not-running" });
+    reconnectTimeout = setTimeout(connectToDiscord, 5000);
+  }
+}
+
 // Connect to Discord
 rpc.on("ready", () => {
+  isConnected = true;
   console.log(`Connected to Discord as ${rpc.user?.username}`);
   emitStatus({ playing: false, reason: "idle" });
   emitConfig(getConfig());
-
-  // Poll Spotify and update presence
-  spotify.onStateChange(async (state: SpotifyState) => {
-    try {
-      await updatePresence(state);
-    } catch (err) {
-      console.error("Failed to update presence:", err);
-    }
-  }, 1000);
 });
 
-rpc.login().catch((err) => {
-  if (err.code === 1 || err.message?.includes("timed out")) {
-    console.error(
-      "Failed to connect to Discord. Make sure Discord is running."
-    );
-    emitStatus({ playing: false, reason: "discord-not-running" });
-  } else {
-    console.error("Discord RPC error:", err);
+rpc.on("disconnected", () => {
+  isConnected = false;
+  console.warn("[sidecar] Disconnected from Discord, retrying in 5s...");
+  reconnectTimeout = setTimeout(connectToDiscord, 5000);
+});
+
+// Start initial connection
+void connectToDiscord();
+
+// Poll Spotify and update presence
+spotify.onStateChange(async (state: SpotifyState) => {
+  if (!isConnected) return;
+  try {
+    await updatePresence(state);
+  } catch (err) {
+    console.error("Failed to update presence:", err);
   }
-});
+}, 1000);

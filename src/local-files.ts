@@ -6,6 +6,7 @@ import {
   writeFileSync,
   watch,
   statSync,
+  type FSWatcher,
 } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -22,7 +23,7 @@ const SPOTIFY_USERS_PATH = path.join(
   "Library",
   "Application Support",
   "Spotify",
-  "Users"
+  "Users",
 );
 
 export interface AppConfig {
@@ -122,8 +123,182 @@ export function updateConfig(partial: Partial<AppConfig>): AppConfig {
   return next;
 }
 
+/**
+ * Normalizes a string for comparison by:
+ * 1. Converting to lowercase
+ * 2. Removing accents (NFKD normalization)
+ * 3. Optional: Removing text in brackets/parentheses
+ * 4. Optional: Removing leading track numbers (e.g., "01. ", "02 - ")
+ * 5. Replacing non-alphanumeric characters with spaces
+ * 6. Collapsing multiple spaces
+ */
+export function normalizeString(
+  str: string,
+  stripExtra = false,
+  stripNumbers = false,
+): string {
+  let s = str
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, ""); // Remove accents
+
+  if (stripExtra) {
+    // Remove (feat...), (original mix), [V1], etc.
+    s = s.replace(/\s*[\(\[].*?[\)\]]/g, "");
+  }
+
+  if (stripNumbers) {
+    // Remove starting numbers like "01. ", "1 - ", "12 "
+    s = s.replace(/^\d+[\s\.\-_]*/, "");
+  }
+
+  return s
+    .replace(/[^a-z0-9]/g, " ") // Replace symbols with spaces
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // Cache for Spotify's local files database
 let spotifyLocalFilesCache: Map<string, string> | null = null;
+
+export class LocalFileFinder {
+  private watchers: Map<string, FSWatcher> = new Map();
+  private listeners: (() => void)[] = [];
+
+  constructor() {
+    // Initial sync
+    this.refreshWatchers();
+  }
+
+  /**
+   * Force clear all local file caches
+   */
+  clearCaches(notify = false): void {
+    console.log("[local-files] Clearing all caches...");
+    spotifyLocalFilesCache = null;
+
+    if (notify) {
+      this.notifyChange();
+    }
+  }
+
+  notifyChange(): void {
+    for (const listener of this.listeners) {
+      listener();
+    }
+  }
+
+  private refreshWatchers(): void {
+    const folders = getMusicFolders();
+
+    // Remove watchers for folders no longer in config
+    for (const [folder, watcher] of this.watchers) {
+      if (!folders.includes(folder)) {
+        watcher.close();
+        this.watchers.delete(folder);
+      }
+    }
+
+    // Add watchers for new folders
+    for (const folder of folders) {
+      if (!this.watchers.has(folder) && existsSync(folder)) {
+        try {
+          console.log(`[local-files] Starting watcher for: ${folder}`);
+          const watcher = watch(
+            folder,
+            { recursive: true },
+            (event, filename) => {
+              console.log(
+                `[local-files] FS Event: ${event} on ${filename || "unknown file"} in ${folder}`,
+              );
+
+              // Check extension if filename is provided
+              if (filename) {
+                const ext = path.extname(filename).toLowerCase();
+                const audioExts = [
+                  ".mp3",
+                  ".m4a",
+                  ".flac",
+                  ".wav",
+                  ".ogg",
+                  ".opus",
+                ];
+                if (filename !== ".DS_Store" && !audioExts.includes(ext)) {
+                  return;
+                }
+              }
+
+              // Invalidate caches and notify
+              this.clearCaches(true);
+            },
+          );
+
+          watcher.on("error", (err: Error) => {
+            console.error(`[local-files] Watcher error for ${folder}:`, err);
+            this.watchers.delete(folder);
+          });
+
+          this.watchers.set(folder, watcher);
+        } catch (err: any) {
+          console.error(`[local-files] Failed to watch ${folder}:`, err);
+        }
+      }
+    }
+  }
+
+  onChange(callback: () => void): () => void {
+    this.listeners.push(callback);
+    // Refresh watchers if we have listeners
+    this.refreshWatchers();
+
+    return () => {
+      this.listeners = this.listeners.filter((l) => l !== callback);
+      if (this.listeners.length === 0) {
+        // Stop all watchers if no one is listening
+        for (const watcher of this.watchers.values()) {
+          watcher.close();
+        }
+        this.watchers.clear();
+      }
+    };
+  }
+
+  async promptAddFolder(): Promise<string | null> {
+    const folder = await addMusicFolder();
+    if (folder) {
+      this.refreshWatchers();
+    }
+    return folder;
+  }
+
+  getFolders(): string[] {
+    return getMusicFolders();
+  }
+
+  removeFolder(folder: string): void {
+    removeMusicFolder(folder);
+    const watcher = this.watchers.get(folder);
+    if (watcher) {
+      watcher.close();
+      this.watchers.delete(folder);
+    }
+  }
+
+  findFile(trackId: string): string | null {
+    return findLocalFile(trackId);
+  }
+}
+
+// Single instance
+export const localFiles = new LocalFileFinder();
+
+/**
+ * Standalone helper to clear caches via the instance
+ */
+export function clearLocalFileCaches(notify = false): void {
+  localFiles.clearCaches(notify);
+}
+
 let bnkFileWatchersStarted = false;
 let lastBnkMtime = 0;
 
@@ -167,17 +342,19 @@ function startBnkWatchers(): void {
       .map((d) => d.name);
 
     for (const userDir of userDirs) {
-      const bnkPath = path.join(SPOTIFY_USERS_PATH, userDir, "local-files.bnk");
       const userPath = path.join(SPOTIFY_USERS_PATH, userDir);
 
       // Watch the directory for file creation/changes
       try {
         watch(userPath, (event, filename) => {
           if (filename === "local-files.bnk") {
-            spotifyLocalFilesCache = null; // Invalidate cache
+            console.log(
+              "[local-files] Spotify database (bnk) changed, invalidating...",
+            );
+            localFiles.clearCaches(true);
           }
         });
-      } catch {
+      } catch (err: unknown) {
         // Ignore watch errors
       }
     }
@@ -185,7 +362,7 @@ function startBnkWatchers(): void {
     // Also watch the Users directory for new user folders
     try {
       watch(SPOTIFY_USERS_PATH, () => {
-        spotifyLocalFilesCache = null; // Invalidate cache on any change
+        localFiles.clearCaches(true);
       });
     } catch {
       // Ignore watch errors
@@ -241,7 +418,7 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
       // Use RegExp constructor to avoid control character issues in literal
       const pathRegex = new RegExp(
         "(\\/[^\\x00-\\x1f]+?\\.(mp3|m4a|flac|wav|ogg|opus|aac|wma))",
-        "gi"
+        "gi",
       );
       const matches = content.matchAll(pathRegex);
 
@@ -263,26 +440,65 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
 }
 
 /**
- * Find a local file path from Spotify's database by matching title.
+ * Find a local file path from Spotify's database by matching title and artist.
  */
-export function findFileFromSpotifyDb(title: string): string | null {
+export function findFileFromSpotifyDb(
+  title: string,
+  artist?: string,
+): string | null {
   const db = parseSpotifyLocalFilesDb();
-  const normalizedTitle = title.toLowerCase();
 
-  // Direct match
-  if (db.has(normalizedTitle)) {
-    const filePath = db.get(normalizedTitle)!;
-    if (existsSync(filePath)) {
-      return filePath;
+  const titleNorm = normalizeString(title);
+  const titleNoExtra = normalizeString(title, true);
+  const titleNoSpace = titleNorm.replace(/\s/g, "");
+
+  const artistNorm = artist ? normalizeString(artist) : "";
+
+  // Helper to check if a match is good
+  const isMatch = (key: string) => {
+    const keyNorm = normalizeString(key);
+    const keyNoExtra = normalizeString(key, true);
+    const keyNoNum = normalizeString(key, false, true);
+    const keyNoExtraNoNum = normalizeString(key, true, true);
+    const keyNoSpace = keyNorm.replace(/\s/g, "");
+
+    // 1. Exact or bracket-less match (highest priority)
+    if (keyNorm === titleNorm || keyNoExtra === titleNoExtra) return true;
+    if (keyNoNum === titleNorm || keyNoExtraNoNum === titleNoExtra) return true;
+
+    // 2. Substring match for titles (min 4 chars)
+    if (titleNoExtra.length >= 4) {
+      if (keyNoExtra.includes(titleNoExtra)) return true;
+      if (keyNoNum.includes(titleNoExtra)) return true;
+      if (keyNoExtraNoNum.includes(titleNoExtra)) return true;
     }
-  }
 
-  // Fuzzy match - find entries containing the title
+    // 3. Space-blind match (min 5 chars for robustness)
+    if (
+      titleNoSpace.length >= 5 &&
+      (keyNoSpace === titleNoSpace ||
+        keyNoSpace.includes(titleNoSpace) ||
+        titleNoSpace.includes(keyNoSpace))
+    ) {
+      return true;
+    }
+
+    // 4. Artist + Title mismatch check (e.g. "Artist - Title.mp3")
+    if (
+      artistNorm &&
+      keyNorm.includes(artistNorm) &&
+      (keyNorm.includes(titleNorm) || keyNorm.includes(titleNoExtra))
+    ) {
+      return true;
+    }
+
+    return false;
+  };
+
+  // Iterative search for better performance/accuracy
   for (const [key, filePath] of db) {
-    if (key.includes(normalizedTitle) || normalizedTitle.includes(key)) {
-      if (existsSync(filePath)) {
-        return filePath;
-      }
+    if (isMatch(key)) {
+      if (existsSync(filePath)) return filePath;
     }
   }
 
@@ -312,47 +528,28 @@ export function parseLocalTrackInfo(trackId: string): {
   };
 }
 
-// Find local file by searching Spotify's database first, then configured folders
+/**
+ * Find a local music file for a Spotify track.
+ * 1. Checks Spotify's local-files.bnk database
+ * 2. Falls back to recursive folder search
+ */
 export function findLocalFile(trackId: string): string | null {
   const info = parseLocalTrackInfo(trackId);
   if (!info) return null;
 
-  const { artist, album, title } = info;
+  const { title, artist } = info;
 
-  // Try Spotify's local files database first (most reliable)
-  const fromDb = findFileFromSpotifyDb(title);
-  if (fromDb) return fromDb;
+  // Try Spotify DB first
+  const dbPath = findFileFromSpotifyDb(title, artist);
+  if (dbPath) return dbPath;
 
-  // Fallback to configured folders search
+  // Fallback: search configured folders
   const folders = getMusicFolders();
   const extensions = [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".opus"];
 
+  // Search recursively in each configured folder
   for (const folder of folders) {
-    // Try various path patterns
-    const patterns = [
-      // Artist/Album/Title
-      path.join(folder, artist, album, title),
-      // Artist/Title
-      path.join(folder, artist, title),
-      // Album/Title
-      path.join(folder, album, title),
-      // Just Title in folder
-      path.join(folder, title),
-    ];
-
-    for (const pattern of patterns) {
-      for (const ext of extensions) {
-        const filePath = pattern + ext;
-        if (existsSync(filePath)) {
-          return filePath;
-        }
-      }
-    }
-  }
-
-  // Fallback: recursive search (slower but more thorough)
-  for (const folder of folders) {
-    const found = searchRecursive(folder, title, extensions);
+    const found = searchRecursive(folder, title, artist, extensions);
     if (found) return found;
   }
 
@@ -362,34 +559,78 @@ export function findLocalFile(trackId: string): string | null {
 function searchRecursive(
   dir: string,
   title: string,
+  artist: string,
   extensions: string[],
-  depth = 0
+  depth = 0,
 ): string | null {
-  if (depth > 4) return null;
+  if (depth > 5) return null; // Increased depth slightly
 
   try {
+    if (!existsSync(dir)) return null;
     const entries = readdirSync(dir, { withFileTypes: true });
 
-    // First, look for direct file matches in this directory
+    const titleNorm = normalizeString(title);
+    const titleNoExtra = normalizeString(title, true);
+    const titleNoSpace = titleNorm.replace(/\s/g, "");
+    const artistNorm = normalizeString(artist);
+
+    // Files first
     for (const entry of entries) {
       if (entry.isFile()) {
-        const name = entry.name.toLowerCase();
-        if (name.includes(title.toLowerCase())) {
-          if (extensions.some((ext) => name.endsWith(ext))) {
-            return path.join(dir, entry.name);
-          }
+        const ext = path.extname(entry.name).toLowerCase();
+        if (!extensions.includes(ext)) continue;
+
+        const name = path.basename(entry.name, ext);
+        const nameNorm = normalizeString(name);
+        const nameNoExtra = normalizeString(name, true);
+        const nameNoNum = normalizeString(name, false, true);
+        const nameNoExtraNoNum = normalizeString(name, true, true);
+        const nameNoSpace = nameNorm.replace(/\s/g, "");
+
+        // Match Logic (Same as DB but for FS)
+        let matched = false;
+        if (
+          nameNorm === titleNorm ||
+          nameNoExtra === titleNoExtra ||
+          nameNoNum === titleNorm ||
+          nameNoExtraNoNum === titleNoExtra
+        ) {
+          matched = true;
+        } else if (
+          titleNoExtra.length >= 4 &&
+          (nameNoExtra.includes(titleNoExtra) ||
+            nameNoNum.includes(titleNoExtra) ||
+            nameNoExtraNoNum.includes(titleNoExtra))
+        ) {
+          matched = true;
+        } else if (
+          titleNoSpace.length >= 5 &&
+          (nameNoSpace === titleNoSpace ||
+            nameNoSpace.includes(titleNoSpace) ||
+            titleNoSpace.includes(nameNoSpace))
+        ) {
+          matched = true;
+        } else if (
+          artistNorm &&
+          nameNorm.includes(artistNorm) &&
+          (nameNorm.includes(titleNorm) || nameNorm.includes(titleNoExtra))
+        ) {
+          matched = true;
+        }
+
+        if (matched) {
+          return path.join(dir, entry.name);
         }
       }
     }
 
-    // If not found, recurse into subdirectories
+    // Then directories
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        // Skip hidden folders and common massive/system folders
         if (
           entry.name.startsWith(".") ||
           ["node_modules", "Library", "System", "Applications"].includes(
-            entry.name
+            entry.name,
           )
         ) {
           continue;
@@ -398,36 +639,16 @@ function searchRecursive(
         const found = searchRecursive(
           path.join(dir, entry.name),
           title,
+          artist,
           extensions,
-          depth + 1
+          depth + 1,
         );
         if (found) return found;
       }
     }
-  } catch (err) {
-    // Silently ignore permission errors (EACCES) or non-existent paths
-    // This prevents the system from being noisy if we hit a restricted subfolder
+  } catch {
+    // Ignore errors
   }
 
   return null;
 }
-
-export class LocalFileFinder {
-  async promptAddFolder(): Promise<string | null> {
-    return addMusicFolder();
-  }
-
-  getFolders(): string[] {
-    return getMusicFolders();
-  }
-
-  removeFolder(folder: string): void {
-    removeMusicFolder(folder);
-  }
-
-  findFile(trackId: string): string | null {
-    return findLocalFile(trackId);
-  }
-}
-
-export const localFiles = new LocalFileFinder();
