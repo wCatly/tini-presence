@@ -132,9 +132,14 @@ export function UpdateBanner() {
     const handleFocus = () => checkForUpdates(true);
     window.addEventListener("focus", handleFocus);
 
+    // Manual trigger from settings
+    const handleTrigger = () => checkForUpdates();
+    window.addEventListener("trigger-update-check", handleTrigger);
+
     return () => {
       clearInterval(interval);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("trigger-update-check", handleTrigger);
     };
   }, [checkForUpdates]);
 

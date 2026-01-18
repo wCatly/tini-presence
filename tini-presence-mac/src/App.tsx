@@ -613,7 +613,18 @@ function SettingsView({
               <History className="w-3.5 h-3.5" />
               <span>Version History</span>
             </div>
-            <span>Current: v{appVersion}</span>
+            <div className="flex items-center gap-2">
+              <span>Current: v{appVersion}</span>
+              <button
+                type="button"
+                onClick={() => {
+                  window.dispatchEvent(new CustomEvent("trigger-update-check"));
+                }}
+                className="px-1.5 py-0.5 rounded bg-primary/10 hover:bg-primary/20 text-primary transition-colors font-medium border border-primary/20"
+              >
+                Check for updates
+              </button>
+            </div>
           </div>
           <ChangelogSection />
         </div>

@@ -1,5 +1,12 @@
 import { exec } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, writeFileSync, watch, statSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+  watch,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -241,7 +248,9 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
       for (const match of matches) {
         const filePath = match[1];
         // Use lowercase filename without extension as key for matching
-        const fileName = path.basename(filePath, path.extname(filePath)).toLowerCase();
+        const fileName = path
+          .basename(filePath, path.extname(filePath))
+          .toLowerCase();
         fileMap.set(fileName, filePath);
       }
     }
@@ -353,31 +362,51 @@ export function findLocalFile(trackId: string): string | null {
 function searchRecursive(
   dir: string,
   title: string,
-  extensions: string[]
+  extensions: string[],
+  depth = 0
 ): string | null {
+  if (depth > 4) return null;
+
   try {
-    const result = Bun.spawnSync([
-      "find",
-      dir,
-      "-type",
-      "f",
-      "-maxdepth",
-      "4",
-      "-name",
-      `*${title}*`,
-    ]);
+    const entries = readdirSync(dir, { withFileTypes: true });
 
-    const output = result.stdout.toString().trim();
-    if (!output) return null;
-
-    const files = output.split("\n");
-    for (const file of files) {
-      if (extensions.some((ext) => file.toLowerCase().endsWith(ext))) {
-        return file;
+    // First, look for direct file matches in this directory
+    for (const entry of entries) {
+      if (entry.isFile()) {
+        const name = entry.name.toLowerCase();
+        if (name.includes(title.toLowerCase())) {
+          if (extensions.some((ext) => name.endsWith(ext))) {
+            return path.join(dir, entry.name);
+          }
+        }
       }
     }
-  } catch {
-    // Ignore search errors
+
+    // If not found, recurse into subdirectories
+    for (const entry of entries) {
+      if (entry.isDirectory()) {
+        // Skip hidden folders and common massive/system folders
+        if (
+          entry.name.startsWith(".") ||
+          ["node_modules", "Library", "System", "Applications"].includes(
+            entry.name
+          )
+        ) {
+          continue;
+        }
+
+        const found = searchRecursive(
+          path.join(dir, entry.name),
+          title,
+          extensions,
+          depth + 1
+        );
+        if (found) return found;
+      }
+    }
+  } catch (err) {
+    // Silently ignore permission errors (EACCES) or non-existent paths
+    // This prevents the system from being noisy if we hit a restricted subfolder
   }
 
   return null;

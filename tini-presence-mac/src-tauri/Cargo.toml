@@ -1,6 +1,6 @@
 [package]
 name = "tini-presence"
-version = "1.0.2"
+version = "1.0.3"
 description = "Music Presence for Spotify"
 authors = ["Florian Bejte"]
 edition = "2021"
