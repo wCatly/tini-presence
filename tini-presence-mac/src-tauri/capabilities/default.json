@@ -5,7 +5,19 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "shell:allow-spawn",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "binaries/tini-presence-core",
+          "sidecar": true
+        },
+        {
+          "name": "tini-presence-core",
+          "sidecar": true
+        }
+      ]
+    },
     "shell:allow-kill",
     "shell:allow-stdin-write",
     "shell:allow-open",

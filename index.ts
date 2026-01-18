@@ -4,6 +4,8 @@
  * Discord Rich Presence for Spotify with local file support
  */
 
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { Client } from "@xhayper/discord-rpc";
 import { spotify, type SpotifyState } from "./src/spotify.ts";
 import { createPresenceService } from "./src/presence.ts";
@@ -15,6 +17,44 @@ import {
   localFiles,
   type AppConfig,
 } from "./src/local-files.ts";
+import { getImageOptimizerStatus } from "./src/cover.ts";
+import { logger, acquireLock, LOG_DIR_PATH } from "./src/logger.ts";
+
+// Acquire lock to prevent multiple instances
+if (!acquireLock()) {
+  logger.error("Failed to acquire lock, another instance may be running. Exiting.");
+  process.exit(1);
+}
+
+// Override console methods to use file logger
+console.log = (...args: unknown[]) => logger.log(...args);
+console.warn = (...args: unknown[]) => logger.warn(...args);
+console.error = (...args: unknown[]) => logger.error(...args);
+
+async function writeStartupDiagnostics() {
+  try {
+    const diagnostics = {
+      timestamp: new Date().toISOString(),
+      platform: process.platform,
+      arch: process.arch,
+      bunVersion: Bun.version,
+      pid: process.pid,
+      logDir: LOG_DIR_PATH,
+      config: {
+        musicFolders: getConfig().musicFolders.length,
+        hasDiscordClientId: Boolean(getConfig().discordClientId),
+      },
+      optimizers: await getImageOptimizerStatus(),
+    };
+
+    const filePath = join(LOG_DIR_PATH, "startup.json");
+    writeFileSync(filePath, JSON.stringify(diagnostics, null, 2));
+  } catch (err) {
+    logger.warn("[startup] Failed to write diagnostics:", err);
+  }
+}
+
+await writeStartupDiagnostics();
 
 let config = getConfig();
 let clientId =
@@ -32,14 +72,6 @@ function refreshPresence(nextConfig: AppConfig) {
   }
 }
 
-const logToStderr = (args: unknown[]) => {
-  process.stderr.write(`${args.map(String).join(" ")}\n`);
-};
-
-console.log = (...args: unknown[]) => logToStderr(args);
-console.warn = (...args: unknown[]) => logToStderr(args);
-console.error = (...args: unknown[]) => logToStderr(args);
-
 interface TrackStatus {
   playing: boolean;
   reason?: string;
@@ -55,8 +87,8 @@ interface TrackStatus {
 }
 
 interface ProtocolMessage {
-  type: "status" | "config";
-  payload: TrackStatus | AppConfig;
+  type: "status" | "config" | "heartbeat";
+  payload: TrackStatus | AppConfig | { timestamp: number };
 }
 
 interface CommandMessage {
@@ -74,6 +106,14 @@ function emitConfig(configPayload: AppConfig) {
   const message: ProtocolMessage = { type: "config", payload: configPayload };
   process.stdout.write(`${JSON.stringify(message)}\n`);
 }
+
+function emitHeartbeat() {
+  const message: ProtocolMessage = { type: "heartbeat", payload: { timestamp: Date.now() } };
+  process.stdout.write(`${JSON.stringify(message)}\n`);
+}
+
+// Send heartbeat every 5 seconds
+setInterval(emitHeartbeat, 5000);
 
 async function handleCommand(message: CommandMessage) {
   switch (message.command) {
@@ -136,8 +176,18 @@ process.stdin.on("data", (chunk) => {
   }
 });
 
+process.stdin.on("end", () => {
+  console.warn("[sidecar] stdin closed; staying alive");
+});
+
+process.stdin.on("close", () => {
+  console.warn("[sidecar] stdin closed; staying alive");
+});
+
+process.stdin.resume();
+
 emitConfig(config);
-console.log("[sidecar] booted");
+console.log(`[sidecar] booted (log dir: ${LOG_DIR_PATH})`);
 
 // Show configured folders
 const folders = presence.getMusicFolders();

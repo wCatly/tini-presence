@@ -76,6 +76,10 @@ export class PresenceService {
     }
 
     if (!this.uploadService) {
+      if (track.artworkUrl) {
+        console.log(`[presence] Upload disabled, using Spotify artwork for ${track.title}`);
+        return track.artworkUrl;
+      }
       return null;
     }
 
