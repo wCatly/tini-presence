@@ -5,7 +5,7 @@ import {
   parseLocalTrackInfo,
   findLocalFile,
   findFileFromSpotifyDb,
-  parseSpotifyLocalFilesDb,
+  getSpotifyLocalFilePaths,
   loadConfig,
   saveConfig,
   getMusicFolders,
@@ -177,47 +177,43 @@ describe("Local Files", () => {
   });
 
   describe("Spotify local-files.bnk parsing", () => {
-    test("parseSpotifyLocalFilesDb returns a Map", () => {
-      const db = parseSpotifyLocalFilesDb();
-      expect(db).toBeInstanceOf(Map);
+    test("getSpotifyLocalFilePaths returns an array", () => {
+      const paths = getSpotifyLocalFilePaths();
+      expect(Array.isArray(paths)).toBe(true);
     });
 
-    test("parseSpotifyLocalFilesDb finds test music files", () => {
-      const db = parseSpotifyLocalFilesDb();
+    test("getSpotifyLocalFilePaths finds test music files", () => {
+      const paths = getSpotifyLocalFilePaths();
 
       // Our test files should be in Spotify's database
-      // Keys are lowercase filenames without extension
-      const hasTestSongOne = db.has("test song one");
-      const hasAnotherTrack = db.has("another track");
-      const hasThirdSong = db.has("third song");
+      const hasTestSongOne = paths.some(p => p.includes("Test Song One"));
+      const hasAnotherTrack = paths.some(p => p.includes("Another Track"));
+      const hasThirdSong = paths.some(p => p.includes("Third Song"));
 
       // At least one should be found if Spotify has indexed them
-      if (db.size > 0) {
+      if (paths.length > 0) {
         expect(hasTestSongOne || hasAnotherTrack || hasThirdSong).toBe(true);
       }
     });
 
-    test("parseSpotifyLocalFilesDb caches results", () => {
+    test("getSpotifyLocalFilePaths caches results", () => {
       // First call
-      const db1 = parseSpotifyLocalFilesDb();
+      const paths1 = getSpotifyLocalFilePaths();
       // Second call should return cached result
-      const db2 = parseSpotifyLocalFilesDb();
+      const paths2 = getSpotifyLocalFilePaths();
 
-      expect(db1).toBe(db2); // Same reference = cached
+      expect(paths1).toBe(paths2); // Same reference = cached
     });
 
     test("findFileFromSpotifyDb finds existing file by title", () => {
-      const db = parseSpotifyLocalFilesDb();
+      const paths = getSpotifyLocalFilePaths();
 
-      if (db.size > 0) {
-        // Get the first file in the database
-        const firstKey = db.keys().next().value;
-        if (firstKey) {
-          const found = findFileFromSpotifyDb(firstKey);
-          // Should return null or a valid path
-          if (found) {
-            expect(existsSync(found)).toBe(true);
-          }
+      if (paths.length > 0) {
+        // Use a known test file title
+        const found = findFileFromSpotifyDb("Test Song One");
+        // Should return null or a valid path
+        if (found) {
+          expect(existsSync(found)).toBe(true);
         }
       }
     });

@@ -31,6 +31,8 @@ interface TrackStatus {
   source?: string;
   positionMs?: number;
   durationMs?: number;
+  trackId?: string;
+  filePath?: string | null;
 }
 
 type ThemeColor = "cyan" | "red" | "green" | "purple" | "orange";

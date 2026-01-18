@@ -28,15 +28,23 @@ export class PresenceService {
   // Cache cover URLs by track ID to avoid repeated HEAD requests
   private coverUrlCache: Map<string, string | null> = new Map();
   private unsubscribe: (() => void) | null = null;
+  // Cache last activity to avoid unnecessary Discord updates
+  private lastActivityKey: string | null = null;
+  private lastActivityTimestamps: { start: number; end: number } | null = null;
 
   constructor(config: PresenceConfig) {
     if (config.upload) {
       this.uploadService = new UploadService(config.upload);
     }
 
-    // Subscribe to music folder changes to clear cache
+    // Subscribe to music folder changes AND Spotify database changes to clear cache
+    // This ensures newly added files are detected
     this.unsubscribe = localFiles.onChange(() => {
+      console.log("[presence] Local files changed, clearing cover URL cache");
       this.coverUrlCache.clear();
+      // Also reset the activity cache to force Discord update
+      this.lastActivityKey = null;
+      this.lastActivityTimestamps = null;
     });
   }
 
@@ -130,19 +138,29 @@ export class PresenceService {
 
   buildActivity(state: SpotifyState, coverUrl: string | null) {
     if (!state.isRunning || state.state !== "playing") {
+      this.lastActivityKey = null;
+      this.lastActivityTimestamps = null;
       return null;
     }
 
     const { track, positionMs } = state;
     const now = Date.now();
+    
+    // Always calculate fresh timestamps based on current position
+    const startTimestamp = now - positionMs;
+    const endTimestamp = now + (track.durationMs - positionMs);
+    
+    // Update cache
+    this.lastActivityKey = `${track.id}:${coverUrl || "none"}`;
+    this.lastActivityTimestamps = { start: startTimestamp, end: endTimestamp };
 
     return {
       type: ActivityType.Listening,
       name: "Spotify",
       details: track.title,
       state: track.artist,
-      startTimestamp: now - positionMs,
-      endTimestamp: now + (track.durationMs - positionMs),
+      startTimestamp,
+      endTimestamp,
       largeImageKey: coverUrl || "spotify",
       largeImageText: track.album,
       smallImageKey: track.source === "local" ? "local" : "spotify-small",

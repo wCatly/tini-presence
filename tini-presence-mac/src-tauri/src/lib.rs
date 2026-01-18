@@ -18,6 +18,8 @@ struct TrackStatus {
     source: Option<String>,
     position_ms: Option<f64>,
     duration_ms: Option<f64>,
+    track_id: Option<String>,
+    file_path: Option<String>,
 }
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
@@ -55,11 +57,25 @@ impl Default for AppState {
     }
 }
 
+/// Kill any orphaned sidecar processes from previous app instances
+fn kill_orphaned_sidecars() {
+    // Use pkill to kill any existing tini-presence-core processes
+    let _ = std::process::Command::new("pkill")
+        .args(["-f", "tini-presence-core"])
+        .output();
+    
+    // Small delay to ensure process is fully terminated
+    std::thread::sleep(std::time::Duration::from_millis(100));
+}
+
 fn start_sidecar(app: &tauri::AppHandle, state: &Arc<Mutex<AppState>>) {
     let mut state_guard = state.lock().unwrap();
     if state_guard.is_running {
         return;
     }
+
+    // Kill any orphaned sidecar processes before starting a new one
+    kill_orphaned_sidecars();
 
     match app.shell().sidecar("tini-presence-core") {
         Ok(cmd) => match cmd.spawn() {
@@ -383,5 +399,20 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|_app, _event| {});
+        .run(|app, event| {
+            // Handle app exit events to ensure sidecar is stopped
+            match event {
+                tauri::RunEvent::ExitRequested { .. } | tauri::RunEvent::Exit => {
+                    if let Some(state) = app.try_state::<Arc<Mutex<AppState>>>() {
+                        let mut guard = state.lock().unwrap();
+                        if let Some(child) = guard.sidecar.take() {
+                            let _ = child.kill();
+                            guard.is_running = false;
+                            println!("Sidecar killed on app exit");
+                        }
+                    }
+                }
+                _ => {}
+            }
+        });
 }

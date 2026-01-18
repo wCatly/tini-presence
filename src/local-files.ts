@@ -125,6 +125,40 @@ export function updateConfig(partial: Partial<AppConfig>): AppConfig {
 }
 
 /**
+ * Normalizes a string for comparison by removing all non-alphanumeric characters
+ * and converting to lowercase. This creates a "signature" for fuzzy matching.
+ * Handles multiple scripts (Latin, Cyrillic, CJK, etc.)
+ */
+export function normalizeForMatch(str: string): string {
+  // Process character by character to handle mixed scripts
+  let result = "";
+
+  for (const char of str.toLowerCase()) {
+    // Try to transliterate this character using slugify
+    // biome-ignore lint/suspicious/noExplicitAny: library type issue
+    // @ts-ignore
+    const slugified = (slugify as any)(char, {
+      replacement: "",
+      lower: true,
+      strict: true,
+      locale: "en",
+      trim: true,
+    });
+
+    if (slugified.length > 0) {
+      // Slugify handled it (e.g., é -> e, Б -> b)
+      result += slugified;
+    } else if (/[\p{L}\p{N}]/u.test(char)) {
+      // Keep letters/numbers that slugify couldn't transliterate (CJK, etc.)
+      result += char;
+    }
+    // Otherwise skip (punctuation, spaces, etc.)
+  }
+
+  return result;
+}
+
+/**
  * Normalizes a string for comparison by:
  * 1. Converting to lowercase
  * 2. Mapping special characters (German sharp S, Nordic AE, etc.)
@@ -175,8 +209,8 @@ export function normalizeString(
     .trim();
 }
 
-// Cache for Spotify's local files database
-let spotifyLocalFilesCache: Map<string, string> | null = null;
+// Cache for file paths from Spotify's local files database
+let spotifyFilePathsCache: string[] | null = null;
 
 export class LocalFileFinder {
   private watchers: Map<string, FSWatcher> = new Map();
@@ -192,7 +226,7 @@ export class LocalFileFinder {
    */
   clearCaches(notify = false): void {
     console.log("[local-files] Clearing all caches...");
-    spotifyLocalFilesCache = null;
+    spotifyFilePathsCache = null;
 
     if (notify) {
       this.notifyChange();
@@ -316,6 +350,35 @@ export function clearLocalFileCaches(notify = false): void {
   localFiles.clearCaches(notify);
 }
 
+/**
+ * Get all local files with their metadata from the Spotify database.
+ * This extracts the actual metadata from the audio files.
+ */
+export async function getAllLocalFilesWithMetadata(): Promise<
+  Array<{
+    filePath: string;
+    title: string;
+    artist: string;
+    album: string;
+    hasCover: boolean;
+  }>
+> {
+  // Dynamic import to avoid circular dependency
+  const { extractMetadata } = await import("./cover.ts");
+  
+  const paths = getSpotifyLocalFilePaths();
+  const results = [];
+
+  for (const filePath of paths) {
+    const metadata = await extractMetadata(filePath);
+    if (metadata) {
+      results.push(metadata);
+    }
+  }
+
+  return results;
+}
+
 let bnkFileWatchersStarted = false;
 let lastBnkMtime = 0;
 
@@ -390,39 +453,38 @@ function startBnkWatchers(): void {
 }
 
 /**
- * Parse Spotify's local-files.bnk database to extract file paths.
- * The .bnk file is a binary format, but file paths are stored as plain strings.
- * We extract paths that look like absolute file paths.
- * Cache is automatically invalidated when the file changes.
+ * Extract all file paths from Spotify's local-files.bnk database.
+ * Simply finds paths starting with /Users/ and ending with audio extensions.
  */
-export function parseSpotifyLocalFilesDb(): Map<string, string> {
+export function getSpotifyLocalFilePaths(): string[] {
   // Start watchers on first call
   startBnkWatchers();
 
-  // Check if file has changed (fallback for systems where watch doesn't work)
+  // Check if file has changed
   const currentMtime = getBnkMtime();
   if (currentMtime !== lastBnkMtime) {
-    spotifyLocalFilesCache = null;
+    spotifyFilePathsCache = null;
     lastBnkMtime = currentMtime;
   }
 
   // Return cached result if valid
-  if (spotifyLocalFilesCache) {
-    return spotifyLocalFilesCache;
+  if (spotifyFilePathsCache) {
+    return spotifyFilePathsCache;
   }
 
-  const fileMap = new Map<string, string>();
+  const paths: string[] = [];
   const spotifyUsersPath = path.join(
     process.env.HOME || "",
     "Library/Application Support/Spotify/Users",
   );
 
+  const audioExtensions = [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".opus", ".aac", ".wma"];
+
   try {
     if (!existsSync(spotifyUsersPath)) {
-      return fileMap;
+      return paths;
     }
 
-    // Find all user directories
     const userDirs = readdirSync(spotifyUsersPath, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
@@ -431,34 +493,45 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
       const bnkPath = path.join(spotifyUsersPath, userDir, "local-files.bnk");
       if (!existsSync(bnkPath)) continue;
 
-      // Read the binary file
       const buffer = readFileSync(bnkPath);
-      const content = buffer.toString("utf-8");
+      const usersPattern = Buffer.from("/Users/");
 
-      // Extract file paths - they start with / and end with common audio extensions
-      // Use RegExp constructor to avoid control character issues in literal
-      // biome-ignore lint/complexity/useRegexLiterals: Complex regex with control chars
-      const pathRegex = new RegExp(
-        "(\\/[^\\x00-\\x1f]+?\\.(mp3|m4a|flac|wav|ogg|opus|aac|wma))",
-        "gi",
-      );
-      const matches = content.matchAll(pathRegex);
+      let i = 0;
+      while (i < buffer.length - 20) {
+        const idx = buffer.indexOf(usersPattern, i);
+        if (idx === -1) break;
 
-      for (const match of matches) {
-        const filePath = match[1];
-        // Use lowercase filename without extension as key for matching
-        const fileName = path
-          .basename(filePath, path.extname(filePath))
-          .toLowerCase();
-        fileMap.set(fileName, filePath);
+        // Find end of path by looking for audio extension
+        let pathEnd = idx;
+        for (let j = idx; j < Math.min(idx + 300, buffer.length); j++) {
+          const slice = buffer.subarray(j, Math.min(j + 5, buffer.length)).toString("utf-8").toLowerCase();
+          for (const ext of audioExtensions) {
+            if (slice.startsWith(ext)) {
+              pathEnd = j + ext.length;
+              break;
+            }
+          }
+          if (pathEnd > idx) break;
+        }
+
+        if (pathEnd > idx) {
+          const filePath = buffer.subarray(idx, pathEnd).toString("utf-8");
+          if (existsSync(filePath) && !paths.includes(filePath)) {
+            paths.push(filePath);
+          }
+          i = pathEnd;
+        } else {
+          i = idx + 1;
+        }
       }
     }
-  } catch {
-    // Ignore errors reading Spotify database
+  } catch (err) {
+    console.error("[local-files] Error parsing Spotify database:", err);
   }
 
-  spotifyLocalFilesCache = fileMap;
-  return fileMap;
+  spotifyFilePathsCache = paths;
+  console.log(`[local-files] Found ${paths.length} files in Spotify database`);
+  return paths;
 }
 
 interface MatchResult {
@@ -467,107 +540,124 @@ interface MatchResult {
 }
 
 /**
- * Find a local file path from Spotify's database by matching title and artist.
- * Returns the best match based on a scoring system.
+ * Strip parentheses/brackets content and leading track numbers from a string
+ */
+function stripExtra(str: string): string {
+  return str
+    .replace(/\s*[\(\[].*?[\)\]]/g, "") // Remove (feat...), [V1], etc.
+    .replace(/^\d+[\s.\-_]*/g, "")      // Remove leading "01. ", "19. ", etc.
+    .trim();
+}
+
+/**
+ * Create multiple normalized variants for matching
+ * Handles cases like "Arm & Leg" vs "ArmLeg" 
+ */
+function getNormalizedVariants(str: string): string[] {
+  const variants: string[] = [];
+  
+  // Basic normalized
+  const norm = normalizeForMatch(str);
+  variants.push(norm);
+  
+  // Without "and" (for & -> and conversion issues)
+  const noAnd = norm.replace(/and/g, "");
+  if (noAnd !== norm && noAnd.length >= 3) {
+    variants.push(noAnd);
+  }
+  
+  // Stripped version
+  const stripped = normalizeForMatch(stripExtra(str));
+  if (stripped !== norm) {
+    variants.push(stripped);
+    const strippedNoAnd = stripped.replace(/and/g, "");
+    if (strippedNoAnd !== stripped && strippedNoAnd.length >= 3) {
+      variants.push(strippedNoAnd);
+    }
+  }
+  
+  return [...new Set(variants)]; // Dedupe
+}
+
+/**
+ * Find a local file by matching title/artist against filenames.
+ * Searches Spotify's known file paths.
  */
 export function findFileFromSpotifyDb(
   title: string,
   artist?: string,
   album?: string,
 ): string | null {
-  const db = parseSpotifyLocalFilesDb();
+  const files = getSpotifyLocalFilePaths();
 
-  const titleNorm = normalizeString(title);
-  const titleNoExtra = normalizeString(title, true);
-  const titleNoSpace = titleNorm.replace(/\s/g, "");
-
-  const artistNorm = artist ? normalizeString(artist) : "";
-  const albumNorm = album ? normalizeString(album) : "";
+  // Create multiple normalized variants for matching
+  const titleVariants = getNormalizedVariants(title);
+  const artistNorm = artist ? normalizeForMatch(artist) : "";
 
   const matches: MatchResult[] = [];
 
-  // Helper to check and score a match
-  const checkMatch = (key: string, filePath: string) => {
-    const keyNorm = normalizeString(key);
-    const keyNoExtra = normalizeString(key, true);
-    const keyNoNum = normalizeString(key, false, true);
-    const keyNoExtraNoNum = normalizeString(key, true, true);
-    const keyNoSpace = keyNorm.replace(/\s/g, "");
+  for (const filePath of files) {
+    const fileName = path.basename(filePath, path.extname(filePath));
+    const fileVariants = getNormalizedVariants(fileName);
 
     let score = 0;
     let matched = false;
 
-    // 1. Exact or bracket-less match (Highest Confidence)
-    if (keyNorm === titleNorm) {
-      score += 100;
-      matched = true;
-    } else if (keyNoExtra === titleNoExtra) {
-      score += 75; // Reduced from 90 to avoid "Song (Live)" beating "Artist - Song"
-      matched = true;
-    } else if (keyNoNum === titleNorm) {
-      score += 80;
-      matched = true;
-    } else if (keyNoExtraNoNum === titleNoExtra) {
-      score += 70;
-      matched = true;
-    }
-    // 2. Substring match for titles (min 4 chars)
-    else if (titleNoExtra.length >= 4) {
-      if (keyNoExtra.includes(titleNoExtra)) {
-        score += 50;
-        matched = true;
-      } else if (keyNoNum.includes(titleNoExtra)) {
-        score += 45;
-        matched = true;
-      } else if (keyNoExtraNoNum.includes(titleNoExtra)) {
-        score += 40;
-        matched = true;
+    // Check all combinations of title and file variants
+    for (const titleVar of titleVariants) {
+      for (const fileVar of fileVariants) {
+        // Exact match
+        if (fileVar === titleVar) {
+          score = Math.max(score, 100);
+          matched = true;
+        }
+        // File contains title or title contains file
+        else if (titleVar.length >= 3 && fileVar.length >= 3) {
+          if (fileVar.includes(titleVar)) {
+            score = Math.max(score, 85);
+            matched = true;
+          } else if (titleVar.includes(fileVar)) {
+            score = Math.max(score, 80);
+            matched = true;
+          }
+        }
       }
     }
-    // 3. Space-blind match
-    else if (
-      titleNoSpace.length >= 5 &&
-      (keyNoSpace === titleNoSpace ||
-        keyNoSpace.includes(titleNoSpace) ||
-        titleNoSpace.includes(keyNoSpace))
-    ) {
-      score += 30;
-      matched = true;
-    }
-    // 4. Artist + Title mismatch check
-    else if (
-      artistNorm &&
-      keyNorm.includes(artistNorm) &&
-      (keyNorm.includes(titleNorm) || keyNorm.includes(titleNoExtra))
-    ) {
-      score += 85; // High confidence if artist is explicitly in file name
-      matched = true;
+
+    // Check if filename contains both artist and title
+    if (!matched && artistNorm) {
+      const fileNorm = fileVariants[0];
+      for (const titleVar of titleVariants) {
+        if (fileNorm.includes(artistNorm) && fileNorm.includes(titleVar)) {
+          score = Math.max(score, 90);
+          matched = true;
+          break;
+        }
+      }
     }
 
     if (matched) {
-      // Bonus: Album match in path?
-      if (albumNorm && filePath.toLowerCase().includes(albumNorm)) {
+      // Bonus for artist in filename
+      if (artistNorm && fileVariants[0].includes(artistNorm)) {
         score += 20;
       }
-
-      // Bonus: High quality format?
-      if (filePath.endsWith(".flac") || filePath.endsWith(".wav")) {
+      // Bonus for high quality
+      const ext = path.extname(filePath).toLowerCase();
+      if (ext === ".flac" || ext === ".wav") {
         score += 5;
       }
-
       matches.push({ path: filePath, score });
     }
-  };
-
-  // Iterative search for better performance/accuracy
-  for (const [key, filePath] of db) {
-    checkMatch(key, filePath);
   }
 
-  // Sort by score descending
   matches.sort((a, b) => b.score - a.score);
 
-  return matches.length > 0 ? matches[0].path : null;
+  if (matches.length > 0) {
+    console.log(`[local-files] Found "${title}" -> ${matches[0].path} (score: ${matches[0].score})`);
+    return matches[0].path;
+  }
+
+  return null;
 }
 
 // Parse track info from Spotify local track ID

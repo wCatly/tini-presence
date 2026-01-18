@@ -11,6 +11,8 @@ import {
   getConfigPath,
   getConfig,
   updateConfig,
+  findLocalFile,
+  localFiles,
   type AppConfig,
 } from "./src/local-files.ts";
 
@@ -48,6 +50,8 @@ interface TrackStatus {
   source?: string;
   positionMs?: number;
   durationMs?: number;
+  trackId?: string;
+  filePath?: string | null;
 }
 
 interface ProtocolMessage {
@@ -151,8 +155,11 @@ if (!presence.hasUpload) {
 // Update Discord presence
 async function updatePresence(state: SpotifyState) {
   if (!state.isRunning) {
-    await rpc.user?.clearActivity();
-    console.log("Cleared presence - Spotify not running");
+    if (lastSentActivityKey !== "cleared:not-running") {
+      await rpc.user?.clearActivity();
+      lastSentActivityKey = "cleared:not-running";
+      console.log("Cleared presence - Spotify not running");
+    }
     emitStatus({ playing: false, reason: "spotify-not-running" });
     return;
   }
@@ -163,9 +170,20 @@ async function updatePresence(state: SpotifyState) {
   // Build activity
   const activity = presence.buildActivity(state, coverUrl);
 
+  // Get local file path if it's a local track
+  const filePath = state.track.source === "local" ? findLocalFile(state.track.id) : null;
+
   if (activity) {
+    // Always update Discord activity - it handles deduplication internally
+    // This ensures seeks, position changes, etc. are reflected
     await rpc.user?.setActivity(activity);
-    console.log(`Playing: ${state.track.title} - ${state.track.artist}`);
+    
+    const activityKey = `playing:${state.track.id}:${coverUrl || "none"}`;
+    if (activityKey !== lastSentActivityKey) {
+      lastSentActivityKey = activityKey;
+      console.log(`Playing: ${state.track.title} - ${state.track.artist}`);
+    }
+    
     emitStatus({
       playing: true,
       title: state.track.title,
@@ -175,10 +193,16 @@ async function updatePresence(state: SpotifyState) {
       source: state.track.source,
       positionMs: state.positionMs,
       durationMs: state.track.durationMs,
+      trackId: state.track.id,
+      filePath,
     });
   } else {
     await rpc.user?.clearActivity();
-    console.log("Cleared presence - not playing");
+    
+    if (lastSentActivityKey !== "cleared:not-playing") {
+      lastSentActivityKey = "cleared:not-playing";
+      console.log("Cleared presence - not playing");
+    }
     emitStatus({
       playing: false,
       reason: "not-playing",
@@ -189,6 +213,8 @@ async function updatePresence(state: SpotifyState) {
       source: state.track.source,
       positionMs: state.positionMs,
       durationMs: state.track.durationMs,
+      trackId: state.track.id,
+      filePath,
     });
   }
 }
@@ -196,6 +222,14 @@ async function updatePresence(state: SpotifyState) {
 // Discord connection state
 let isConnected = false;
 let reconnectTimeout: Timer | null = null;
+// Track last sent activity to avoid redundant Discord API calls
+let lastSentActivityKey: string | null = null;
+
+// Listen for local file changes to reset Discord activity
+localFiles.onChange(() => {
+  console.log("[sidecar] Local files changed, resetting activity key");
+  lastSentActivityKey = null;
+});
 
 async function connectToDiscord() {
   if (reconnectTimeout) {

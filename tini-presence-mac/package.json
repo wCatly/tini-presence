@@ -1,7 +1,7 @@
 {
   "name": "tini-presence-mac",
   "private": true,
-  "version": "1.0.5",
+  "version": "1.0.6",
   "type": "module",
   "scripts": {
     "build:sidecar": "bun run scripts/build-sidecar.ts",
