@@ -38,8 +38,10 @@ export function UpdateBanner() {
     error: null,
   });
 
-  const checkForUpdates = useCallback(async () => {
-    setState((prev) => ({ ...prev, status: "checking", error: null }));
+  const checkForUpdates = useCallback(async (silent = false) => {
+    if (!silent) {
+      setState((prev) => ({ ...prev, status: "checking", error: null }));
+    }
 
     try {
       const update = await check();
@@ -54,14 +56,16 @@ export function UpdateBanner() {
       }
     } catch (error) {
       console.error("Failed to check for updates:", error);
-      setState((prev) => ({
-        ...prev,
-        status: "error",
-        error:
-          error instanceof Error
-            ? error.message
-            : "Failed to check for updates",
-      }));
+      if (!silent) {
+        setState((prev) => ({
+          ...prev,
+          status: "error",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Failed to check for updates",
+        }));
+      }
     }
   }, []);
 
@@ -116,7 +120,22 @@ export function UpdateBanner() {
   }, [state.update]);
 
   useEffect(() => {
+    // Initial check (non-silent)
     checkForUpdates();
+
+    // Background check every hour
+    const interval = setInterval(() => {
+      checkForUpdates(true);
+    }, 1000 * 60 * 60);
+
+    // Check when window is focused
+    const handleFocus = () => checkForUpdates(true);
+    window.addEventListener("focus", handleFocus);
+
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+    };
   }, [checkForUpdates]);
 
   if (state.status === "idle") return null;
@@ -198,7 +217,7 @@ export function UpdateBanner() {
           <Button
             size="sm"
             variant="outline"
-            onClick={checkForUpdates}
+            onClick={() => checkForUpdates()}
             className="h-8 px-3 text-xs"
           >
             Retry
