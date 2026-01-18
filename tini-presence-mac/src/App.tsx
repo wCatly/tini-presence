@@ -171,7 +171,7 @@ function App() {
                 </h1>
                 {import.meta.env.DEV && (
                   <span className="px-1.5 py-0.5 rounded text-[8px] font-bold bg-amber-500/20 text-amber-500 border border-amber-500/30 uppercase tracking-widest">
-                    Dev
+                    Development
                   </span>
                 )}
               </div>
