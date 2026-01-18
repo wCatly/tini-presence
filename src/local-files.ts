@@ -11,6 +11,7 @@ import {
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import slugify from "slugify";
 
 const execAsync = promisify(exec);
 
@@ -126,7 +127,8 @@ export function updateConfig(partial: Partial<AppConfig>): AppConfig {
 /**
  * Normalizes a string for comparison by:
  * 1. Converting to lowercase
- * 2. Removing accents (NFKD normalization)
+ * 2. Mapping special characters (German sharp S, Nordic AE, etc.)
+ * 3. Removing accents (NFKD normalization)
  * 3. Optional: Removing text in brackets/parentheses
  * 4. Optional: Removing leading track numbers (e.g., "01. ", "02 - ")
  * 5. Replacing non-alphanumeric characters with spaces
@@ -137,10 +139,7 @@ export function normalizeString(
   stripExtra = false,
   stripNumbers = false,
 ): string {
-  let s = str
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, ""); // Remove accents
+  let s = str;
 
   if (stripExtra) {
     // Remove (feat...), (original mix), [V1], etc.
@@ -149,8 +148,26 @@ export function normalizeString(
 
   if (stripNumbers) {
     // Remove starting numbers like "01. ", "1 - ", "12 "
+    // biome-ignore lint/complexity/noUselessEscapeInRegex: Required for correct matching
     s = s.replace(/^\d+[\s\.\-_]*/, "");
   }
+
+  // Replace common separators with spaces to preserve them during slugify
+  // Replace % with empty string (100% -> 100) or space? User wanted 100% -> 100
+  s = s.replace(/%/g, "");
+  s = s.replace(/[\/\.\-_&]/g, " ");
+
+  // Use slugify to handle special characters (transliteration)
+  // e.g. "MÉNAGE" -> "menage", "Łódź" -> "lodz"
+  // biome-ignore lint/suspicious/noExplicitAny: library type issue
+  // @ts-ignore
+  s = (slugify as any)(s, {
+    replacement: " ", // Replace spaces with space
+    lower: true, // Lowercase
+    strict: false, // Don't strip special chars yet
+    locale: "vi", // Use 'vi' locale for best ASCII approximation usually
+    trim: true,
+  });
 
   return s
     .replace(/[^a-z0-9]/g, " ") // Replace symbols with spaces
@@ -239,7 +256,7 @@ export class LocalFileFinder {
           });
 
           this.watchers.set(folder, watcher);
-        } catch (err: any) {
+        } catch (err: unknown) {
           console.error(`[local-files] Failed to watch ${folder}:`, err);
         }
       }
@@ -354,7 +371,7 @@ function startBnkWatchers(): void {
             localFiles.clearCaches(true);
           }
         });
-      } catch (err: unknown) {
+      } catch {
         // Ignore watch errors
       }
     }
@@ -395,19 +412,23 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
   }
 
   const fileMap = new Map<string, string>();
+  const spotifyUsersPath = path.join(
+    process.env.HOME || "",
+    "Library/Application Support/Spotify/Users",
+  );
 
   try {
-    if (!existsSync(SPOTIFY_USERS_PATH)) {
+    if (!existsSync(spotifyUsersPath)) {
       return fileMap;
     }
 
     // Find all user directories
-    const userDirs = readdirSync(SPOTIFY_USERS_PATH, { withFileTypes: true })
+    const userDirs = readdirSync(spotifyUsersPath, { withFileTypes: true })
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
 
     for (const userDir of userDirs) {
-      const bnkPath = path.join(SPOTIFY_USERS_PATH, userDir, "local-files.bnk");
+      const bnkPath = path.join(spotifyUsersPath, userDir, "local-files.bnk");
       if (!existsSync(bnkPath)) continue;
 
       // Read the binary file
@@ -416,6 +437,7 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
 
       // Extract file paths - they start with / and end with common audio extensions
       // Use RegExp constructor to avoid control character issues in literal
+      // biome-ignore lint/complexity/useRegexLiterals: Complex regex with control chars
       const pathRegex = new RegExp(
         "(\\/[^\\x00-\\x1f]+?\\.(mp3|m4a|flac|wav|ogg|opus|aac|wma))",
         "gi",
@@ -439,12 +461,19 @@ export function parseSpotifyLocalFilesDb(): Map<string, string> {
   return fileMap;
 }
 
+interface MatchResult {
+  path: string;
+  score: number;
+}
+
 /**
  * Find a local file path from Spotify's database by matching title and artist.
+ * Returns the best match based on a scoring system.
  */
 export function findFileFromSpotifyDb(
   title: string,
   artist?: string,
+  album?: string,
 ): string | null {
   const db = parseSpotifyLocalFilesDb();
 
@@ -453,56 +482,92 @@ export function findFileFromSpotifyDb(
   const titleNoSpace = titleNorm.replace(/\s/g, "");
 
   const artistNorm = artist ? normalizeString(artist) : "";
+  const albumNorm = album ? normalizeString(album) : "";
 
-  // Helper to check if a match is good
-  const isMatch = (key: string) => {
+  const matches: MatchResult[] = [];
+
+  // Helper to check and score a match
+  const checkMatch = (key: string, filePath: string) => {
     const keyNorm = normalizeString(key);
     const keyNoExtra = normalizeString(key, true);
     const keyNoNum = normalizeString(key, false, true);
     const keyNoExtraNoNum = normalizeString(key, true, true);
     const keyNoSpace = keyNorm.replace(/\s/g, "");
 
-    // 1. Exact or bracket-less match (highest priority)
-    if (keyNorm === titleNorm || keyNoExtra === titleNoExtra) return true;
-    if (keyNoNum === titleNorm || keyNoExtraNoNum === titleNoExtra) return true;
+    let score = 0;
+    let matched = false;
 
-    // 2. Substring match for titles (min 4 chars)
-    if (titleNoExtra.length >= 4) {
-      if (keyNoExtra.includes(titleNoExtra)) return true;
-      if (keyNoNum.includes(titleNoExtra)) return true;
-      if (keyNoExtraNoNum.includes(titleNoExtra)) return true;
+    // 1. Exact or bracket-less match (Highest Confidence)
+    if (keyNorm === titleNorm) {
+      score += 100;
+      matched = true;
+    } else if (keyNoExtra === titleNoExtra) {
+      score += 75; // Reduced from 90 to avoid "Song (Live)" beating "Artist - Song"
+      matched = true;
+    } else if (keyNoNum === titleNorm) {
+      score += 80;
+      matched = true;
+    } else if (keyNoExtraNoNum === titleNoExtra) {
+      score += 70;
+      matched = true;
     }
-
-    // 3. Space-blind match (min 5 chars for robustness)
-    if (
+    // 2. Substring match for titles (min 4 chars)
+    else if (titleNoExtra.length >= 4) {
+      if (keyNoExtra.includes(titleNoExtra)) {
+        score += 50;
+        matched = true;
+      } else if (keyNoNum.includes(titleNoExtra)) {
+        score += 45;
+        matched = true;
+      } else if (keyNoExtraNoNum.includes(titleNoExtra)) {
+        score += 40;
+        matched = true;
+      }
+    }
+    // 3. Space-blind match
+    else if (
       titleNoSpace.length >= 5 &&
       (keyNoSpace === titleNoSpace ||
         keyNoSpace.includes(titleNoSpace) ||
         titleNoSpace.includes(keyNoSpace))
     ) {
-      return true;
+      score += 30;
+      matched = true;
     }
-
-    // 4. Artist + Title mismatch check (e.g. "Artist - Title.mp3")
-    if (
+    // 4. Artist + Title mismatch check
+    else if (
       artistNorm &&
       keyNorm.includes(artistNorm) &&
       (keyNorm.includes(titleNorm) || keyNorm.includes(titleNoExtra))
     ) {
-      return true;
+      score += 85; // High confidence if artist is explicitly in file name
+      matched = true;
     }
 
-    return false;
+    if (matched) {
+      // Bonus: Album match in path?
+      if (albumNorm && filePath.toLowerCase().includes(albumNorm)) {
+        score += 20;
+      }
+
+      // Bonus: High quality format?
+      if (filePath.endsWith(".flac") || filePath.endsWith(".wav")) {
+        score += 5;
+      }
+
+      matches.push({ path: filePath, score });
+    }
   };
 
   // Iterative search for better performance/accuracy
   for (const [key, filePath] of db) {
-    if (isMatch(key)) {
-      if (existsSync(filePath)) return filePath;
-    }
+    checkMatch(key, filePath);
   }
 
-  return null;
+  // Sort by score descending
+  matches.sort((a, b) => b.score - a.score);
+
+  return matches.length > 0 ? matches[0].path : null;
 }
 
 // Parse track info from Spotify local track ID
@@ -537,42 +602,50 @@ export function findLocalFile(trackId: string): string | null {
   const info = parseLocalTrackInfo(trackId);
   if (!info) return null;
 
-  const { title, artist } = info;
+  const { title, artist, album } = info;
 
   // Try Spotify DB first
-  const dbPath = findFileFromSpotifyDb(title, artist);
+  const dbPath = findFileFromSpotifyDb(title, artist, album);
   if (dbPath) return dbPath;
 
   // Fallback: search configured folders
   const folders = getMusicFolders();
   const extensions = [".mp3", ".m4a", ".flac", ".wav", ".ogg", ".opus"];
+  const matches: MatchResult[] = [];
 
   // Search recursively in each configured folder
   for (const folder of folders) {
-    const found = searchRecursive(folder, title, artist, extensions);
-    if (found) return found;
+    searchRecursiveAll(folder, title, artist, album, extensions, matches);
+  }
+
+  if (matches.length > 0) {
+    matches.sort((a, b) => b.score - a.score);
+    return matches[0].path;
   }
 
   return null;
 }
 
-function searchRecursive(
+function searchRecursiveAll(
   dir: string,
   title: string,
   artist: string,
+  album: string,
   extensions: string[],
+  matches: MatchResult[],
   depth = 0,
-): string | null {
-  if (depth > 5) return null; // Increased depth slightly
+): void {
+  if (depth > 5) return;
 
   try {
-    if (!existsSync(dir)) return null;
+    if (!existsSync(dir)) return;
     const entries = readdirSync(dir, { withFileTypes: true });
 
     const titleNorm = normalizeString(title);
     const titleNoExtra = normalizeString(title, true);
     const titleNoSpace = titleNorm.replace(/\s/g, "");
     const artistNorm = normalizeString(artist);
+    const albumNorm = normalizeString(album);
 
     // Files first
     for (const entry of entries) {
@@ -587,14 +660,21 @@ function searchRecursive(
         const nameNoExtraNoNum = normalizeString(name, true, true);
         const nameNoSpace = nameNorm.replace(/\s/g, "");
 
-        // Match Logic (Same as DB but for FS)
+        let score = 0;
         let matched = false;
-        if (
-          nameNorm === titleNorm ||
-          nameNoExtra === titleNoExtra ||
-          nameNoNum === titleNorm ||
-          nameNoExtraNoNum === titleNoExtra
-        ) {
+
+        // Match Logic & Scoring
+        if (nameNorm === titleNorm) {
+          score += 100;
+          matched = true;
+        } else if (nameNoExtra === titleNoExtra) {
+          score += 75;
+          matched = true;
+        } else if (nameNoNum === titleNorm) {
+          score += 80;
+          matched = true;
+        } else if (nameNoExtraNoNum === titleNoExtra) {
+          score += 70;
           matched = true;
         } else if (
           titleNoExtra.length >= 4 &&
@@ -602,6 +682,7 @@ function searchRecursive(
             nameNoNum.includes(titleNoExtra) ||
             nameNoExtraNoNum.includes(titleNoExtra))
         ) {
+          score += 50;
           matched = true;
         } else if (
           titleNoSpace.length >= 5 &&
@@ -609,17 +690,27 @@ function searchRecursive(
             nameNoSpace.includes(titleNoSpace) ||
             titleNoSpace.includes(nameNoSpace))
         ) {
+          score += 30;
           matched = true;
         } else if (
           artistNorm &&
           nameNorm.includes(artistNorm) &&
           (nameNorm.includes(titleNorm) || nameNorm.includes(titleNoExtra))
         ) {
+          score += 85;
           matched = true;
         }
 
         if (matched) {
-          return path.join(dir, entry.name);
+          // Bonus: Album match in path?
+          if (albumNorm && dir.toLowerCase().includes(albumNorm)) {
+            score += 20;
+          }
+          // Bonus: High quality?
+          if (ext === ".flac" || ext === ".wav") {
+            score += 5;
+          }
+          matches.push({ path: path.join(dir, entry.name), score });
         }
       }
     }
@@ -636,19 +727,18 @@ function searchRecursive(
           continue;
         }
 
-        const found = searchRecursive(
+        searchRecursiveAll(
           path.join(dir, entry.name),
           title,
           artist,
+          album,
           extensions,
+          matches,
           depth + 1,
         );
-        if (found) return found;
       }
     }
   } catch {
     // Ignore errors
   }
-
-  return null;
 }
